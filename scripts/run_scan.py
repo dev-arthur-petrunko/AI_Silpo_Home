@@ -68,10 +68,10 @@ async def post_run(_args: argparse.Namespace) -> int:
     bot = Bot(token=settings.telegram_bot_token, default=DefaultBotProperties(parse_mode="HTML"))
     try:
         stats = await scan_promotions(bot, settings)
-        print("posted:", len(stats["posted"]))
-        for item in stats["posted"]:
+        posted = stats["posted"]
+        print(f"posted: {len(posted)}")
+        for item in posted:
             print("  ", item)
-        print("skipped_dup:", stats["skipped_dup"], "| below_threshold:", stats["below_threshold"])
     finally:
         await bot.session.close()
         await dispose_engine()

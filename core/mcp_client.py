@@ -247,7 +247,12 @@ class SilpoMCPClient:
     async def get_wholesale_products(
         self, ctx: DeliveryContext, promotion_code: str = "melkoopt", max_pages: int = 15
     ) -> list[Product]:
-        """Fetch products of the wholesale promotion and resolve quantity tiers."""
+        """Fetch products of the wholesale promotion and resolve quantity tiers.
+
+        Pages are fetched concurrently (after reading meta.total from page 0)
+        so the scan stays fast even when the promotion has many products."""
+        import asyncio
+
         base = {
             "branchId": ctx.branch_id,
             "deliveryType": ctx.delivery_type,
@@ -256,25 +261,37 @@ class SilpoMCPClient:
             "promotionCode": promotion_code,
             "limit": 100,
         }
+        first = await self.call_tool("silpo_get_products", {**base, "offset": 0})
+        total = first.get("meta", {}).get("total")
+
+        offsets: list[int] = []
+        if total is not None:
+            for offset in range(base["limit"], min(total, max_pages * base["limit"]), base["limit"]):
+                offsets.append(offset)
+        else:
+            offsets = [page * base["limit"] for page in range(1, max_pages)]
+
+        pages: list[dict[str, Any]] = [first]
+        if offsets:
+            results = await asyncio.gather(
+                *(self.call_tool("silpo_get_products", {**base, "offset": offset}) for offset in offsets),
+                return_exceptions=True,
+            )
+            for offset, result in zip(offsets, results):
+                if isinstance(result, Exception):
+                    logger.warning("page offset=%s failed: %r", offset, result)
+                    continue
+                pages.append(result)
+
         products: list[Product] = []
         seen: set[str] = set()
-        total = None
-        for page in range(max_pages):
-            offset = page * base["limit"]
-            args = {**base, "offset": offset}
-            data = await self.call_tool("silpo_get_products", args)
-            items = data.get("products", [])
-            for item in items:
+        for data in pages:
+            for item in data.get("products", []):
                 product = Product.from_mcp(item)
                 if product is None or product.mcp_id in seen:
                     continue
                 seen.add(product.mcp_id)
                 products.append(product)
-            total = data.get("meta", {}).get("total", total)
-            if total is not None and offset + len(items) >= total:
-                break
-            if not items:
-                break
         logger.info("fetched %d wholesale products (promotion=%s)", len(products), promotion_code)
         return products
 

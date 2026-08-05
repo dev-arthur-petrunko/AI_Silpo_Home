@@ -1,5 +1,7 @@
 .env
 dev.db
+*.log
+*_out.txt
 __pycache__/
 *.py[cod]
 *.egg-info/

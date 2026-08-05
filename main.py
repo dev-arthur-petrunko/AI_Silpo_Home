@@ -108,12 +108,7 @@ async def main() -> None:
         await message.answer("Сканую оптові акції...")
         try:
             stats = await scan_promotions(bot, settings)
-            posted = stats.get("posted", [])
-            await message.answer(
-                f"Скан завершено.\nНових постів: {len(posted)}\n"
-                f"Пропущено (вже опубліковано): {stats.get('skipped_dup', 0)}\n"
-                f"Пропущено (нижче порога): {stats.get('below_threshold', 0)}"
-            )
+            await message.answer(f"Скан завершено. Нових постів: {len(stats.get('posted', []))}")
         except Exception as exc:
             logger.exception("scan failed")
             await message.answer(f"Помилка сканування: {exc}")
