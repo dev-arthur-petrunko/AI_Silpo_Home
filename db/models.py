@@ -52,8 +52,9 @@ class Deal(Base):
     image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     unit_price_retail: Mapped[float] = mapped_column(Numeric(10, 2))
     unit_price_wholesale: Mapped[float] = mapped_column(Numeric(10, 2))
-    wholesale_pack_size: Mapped[int] = mapped_column(Integer)
+    wholesale_pack_size: Mapped[float] = mapped_column(Numeric(10, 3))
     savings_per_unit: Mapped[float] = mapped_column(Numeric(10, 2))
+    weighted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     status: Mapped[DealStatus] = mapped_column(
         Enum(DealStatus, name="deal_status"),
         default=DealStatus.collecting,
@@ -80,7 +81,7 @@ class Participant(Base):
     deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), index=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger)
     telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    quantity: Mapped[float] = mapped_column(Numeric(10, 3), default=1)
     phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

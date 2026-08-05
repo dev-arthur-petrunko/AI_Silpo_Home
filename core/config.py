@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     mcp_api_key: str | None = None
     mcp_protocol_version: str = "2025-06-18"
     mcp_request_timeout_seconds: float = 60.0
+    delivery_address: str = "Київ, вул. Богдана Хмельницького, 1"
+    delivery_type_preference: str = ""
 
     database_url: str = "postgresql+asyncpg://localhost:5432/silpo_home"
 
