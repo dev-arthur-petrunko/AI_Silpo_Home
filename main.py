@@ -1,22 +1,34 @@
+import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
-from bot.keyboards import parse_deal_join
+from bot.keyboards import (
+    DEAL_INFO,
+    deal_keyboard,
+    deal_step,
+    parse_deal_dec,
+    parse_deal_inc,
+    parse_deal_join,
+)
+from bot.texts import fmt_qty, format_deal_record, pack_unit
 from core.config import Settings, get_settings
+from core.orders import OPEN_STATUSES, apply_quantity, build_order_summary
 from core.promo_scanner import schedule_jobs, scan_promotions
-from db.models import Group
+from db.models import Deal, Group
 from db.session import dispose_engine, get_sessionmaker, init_engine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
 
 ACTIVE_MEMBER_STATUSES = {"member", "administrator", "creator"}
+DEAL_LOCKS: dict[int, asyncio.Lock] = {}
 
 
 async def main() -> None:
@@ -113,16 +125,93 @@ async def main() -> None:
             logger.exception("scan failed")
             await message.answer(f"Помилка сканування: {exc}")
 
+    @dp.message(Command("order"))
+    async def cmd_order(message: Message) -> None:
+        chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else None
+        session = get_sessionmaker()()
+        try:
+            text = await build_order_summary(session, message.from_user.id, chat_id)
+        finally:
+            await session.close()
+        await message.answer(text)
+
     @dp.callback_query()
     async def on_callback(callback: CallbackQuery) -> None:
         data = callback.data or ""
-        if data == "deal:info":
+        if data == DEAL_INFO:
             await callback.answer("Партія — мінімальна кількість для оптової ціни")
             return
-        if parse_deal_join(data) is not None:
-            await callback.answer("Прийом замовлень — наступний етап розробки")
+
+        join_id = parse_deal_join(data)
+        inc_id = parse_deal_inc(data)
+        dec_id = parse_deal_dec(data)
+        if join_id is None and inc_id is None and dec_id is None:
+            await callback.answer()
             return
-        await callback.answer()
+        deal_id = join_id or inc_id or dec_id
+        if deal_id is None:
+            await callback.answer()
+            return
+
+        lock = DEAL_LOCKS.setdefault(deal_id, asyncio.Lock())
+        async with lock:
+            session = get_sessionmaker()()
+            try:
+                deal = (
+                    await session.execute(select(Deal).where(Deal.id == deal_id))
+                ).scalar_one_or_none()
+                if deal is None:
+                    await callback.answer("Угоду не знайдено")
+                    return
+                if deal.status not in OPEN_STATUSES:
+                    await callback.answer("Ця угода вже закрита")
+                    return
+                group = (
+                    await session.execute(select(Group).where(Group.id == deal.group_id))
+                ).scalar_one()
+
+                if join_id is not None:
+                    delta = deal_step(deal.weighted)
+                elif inc_id is not None:
+                    delta = deal_step(deal.weighted)
+                else:
+                    delta = -deal_step(deal.weighted)
+
+                user_total, deal_total, removed = await apply_quantity(
+                    session,
+                    deal,
+                    callback.from_user.id,
+                    callback.from_user.username or callback.from_user.first_name,
+                    delta,
+                )
+
+                text = format_deal_record(deal, collected=deal_total)
+                keyboard = deal_keyboard(deal.id, deal.wholesale_pack_size, deal.weighted)
+                try:
+                    if deal.image_url:
+                        await bot.edit_message_caption(
+                            chat_id=group.telegram_chat_id,
+                            message_id=deal.telegram_message_id,
+                            caption=text,
+                            reply_markup=keyboard,
+                        )
+                    else:
+                        await bot.edit_message_text(
+                            chat_id=group.telegram_chat_id,
+                            message_id=deal.telegram_message_id,
+                            text=text,
+                            reply_markup=keyboard,
+                        )
+                except TelegramBadRequest as exc:
+                    logger.warning("could not refresh deal %s post: %s", deal.id, exc)
+
+                unit = pack_unit(deal.weighted)
+                if removed:
+                    await callback.answer("Ти відмовився від участі")
+                else:
+                    await callback.answer(f"Ти: {fmt_qty(user_total)} {unit}")
+            finally:
+                await session.close()
 
     scheduler = AsyncIOScheduler(timezone="UTC")
     schedule_jobs(scheduler, bot, settings)
