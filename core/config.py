@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://localhost:5432/silpo_home"
 
     scan_interval_hours: int = 6
-    min_discount_percent: float = 15.0
+    min_discount_percent: float = 50.0
+    max_posts_per_scan: int = 10
     deal_default_deadline_days: int = 3
 
     @field_validator("manager_chat_id", mode="before")

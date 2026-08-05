@@ -42,6 +42,26 @@ def test_filter_skips_existing_ids():
     assert [p.mcp_id for p in result] == ["b"]
 
 
+def test_filter_sorts_by_discount_desc():
+    products = [
+        _product("low", 100, 75, 5),  # 25%
+        _product("high", 100, 30, 5),  # 70%
+        _product("mid", 100, 55, 5),  # 45%
+    ]
+    result = filter_new_deals(products, set(), min_discount_percent=15)
+    assert [p.mcp_id for p in result] == ["high", "mid", "low"]
+
+
+def test_filter_caps_at_limit():
+    products = [
+        _product("a", 100, 40, 5),  # 60%
+        _product("b", 100, 35, 5),  # 65%
+        _product("c", 100, 30, 5),  # 70%
+    ]
+    result = filter_new_deals(products, set(), min_discount_percent=15, limit=2)
+    assert [p.mcp_id for p in result] == ["c", "b"]
+
+
 def test_product_from_mcp_quantity_logic():
     raw = {
         "id": "p1",

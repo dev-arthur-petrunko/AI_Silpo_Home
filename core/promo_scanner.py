@@ -28,9 +28,11 @@ def filter_new_deals(
     products: Iterable[Product],
     existing_product_ids: set[str],
     min_discount_percent: float,
+    limit: int | None = None,
 ) -> list[Product]:
     """Wholesale deals worth posting: in stock, discount above threshold,
-    not already published in this group."""
+    not already published in this group. Sorted by discount (desc), then by
+    name; capped at `limit`."""
     result: list[Product] = []
     for product in products:
         if product.mcp_id in existing_product_ids:
@@ -40,6 +42,9 @@ def filter_new_deals(
         if product.discount_percent < min_discount_percent:
             continue
         result.append(product)
+    result.sort(key=lambda p: (-p.discount_percent, p.name))
+    if limit is not None:
+        result = result[:limit]
     return result
 
 
@@ -80,8 +85,17 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
                     )
                 ).scalars().all()
             )
-            new_deals = filter_new_deals(products, existing_ids, settings.min_discount_percent)
-            stats["below_threshold"] += max(0, len([p for p in products if p.mcp_id not in existing_ids]) - len(new_deals))
+            qualified = filter_new_deals(products, existing_ids, settings.min_discount_percent)
+            new_deals = filter_new_deals(
+                products,
+                existing_ids,
+                settings.min_discount_percent,
+                settings.max_posts_per_scan,
+            )
+            stats["below_threshold"] += max(
+                0,
+                len([p for p in products if p.mcp_id not in existing_ids]) - len(qualified),
+            )
             stats["skipped_dup"] += len(existing_ids)
 
             for product in new_deals:
