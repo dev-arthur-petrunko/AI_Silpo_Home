@@ -4,6 +4,29 @@ DEAL_JOIN_PREFIX = "deal:join:"
 DEAL_INC_PREFIX = "deal:inc:"
 DEAL_DEC_PREFIX = "deal:dec:"
 DEAL_INFO = "deal:info"
+DEAL_STOCK_PREFIX = "deal:stock:"
+CITY_SETTINGS = "city:settings"
+CITY_PICK_PREFIX = "city:pick:"
+
+SUPPORTED_CITIES = [
+    "Київ",
+    "Львів",
+    "Одеса",
+    "Харків",
+    "Дніпро",
+    "Вінниця",
+    "Полтава",
+    "Черкаси",
+    "Івано-Франківськ",
+    "Запоріжжя",
+    "Хмельницький",
+    "Тернопіль",
+    "Рівне",
+    "Ужгород",
+    "Чернівці",
+    "Житомир",
+    "Луцьк",
+]
 HOUSE_THINKING = "house:thinking"
 HOUSE_CHECKOUT = "house:checkout"
 HOUSE_STATUS = "house:status"
@@ -109,6 +132,10 @@ def deal_keyboard(deal_id: int, pack_size: float, weighted: bool = False) -> Inl
             ],
             [
                 InlineKeyboardButton(
+                    text="🔎 Наявність",
+                    callback_data=f"{DEAL_STOCK_PREFIX}{deal_id}",
+                ),
+                InlineKeyboardButton(
                     text=f"📦 Партія: {pack} {unit}",
                     callback_data=DEAL_INFO,
                 ),
@@ -136,3 +163,43 @@ def parse_deal_inc(data: str) -> int | None:
 
 def parse_deal_dec(data: str) -> int | None:
     return _parse_deal_id(data, DEAL_DEC_PREFIX)
+
+
+def parse_deal_stock(data: str) -> int | None:
+    return _parse_deal_id(data, DEAL_STOCK_PREFIX)
+
+
+def city_settings_keyboard(current: str | None) -> InlineKeyboardMarkup:
+    """Кнопка налаштування міста групи (відкриває вибір міста)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌆 Змінити місто групи",
+                    callback_data=CITY_SETTINGS,
+                ),
+            ],
+        ]
+    )
+
+
+def city_picker_keyboard(current: str | None) -> InlineKeyboardMarkup:
+    """Сітка міст для одноразового вибору адміністратором."""
+    rows = []
+    for i in range(0, len(SUPPORTED_CITIES), 3):
+        row = [
+            InlineKeyboardButton(
+                text=("✅ " if city == current else "") + city,
+                callback_data=f"{CITY_PICK_PREFIX}{city}",
+            )
+            for city in SUPPORTED_CITIES[i : i + 3]
+        ]
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def parse_city_pick(data: str) -> str | None:
+    if not data.startswith(CITY_PICK_PREFIX):
+        return None
+    city = data[len(CITY_PICK_PREFIX):]
+    return city or None

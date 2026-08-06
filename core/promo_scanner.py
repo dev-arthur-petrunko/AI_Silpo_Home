@@ -14,7 +14,7 @@ from sqlalchemy import select
 from bot.keyboards import deal_keyboard
 from bot.texts import format_deal_text
 from core.config import Settings
-from core.mcp_client import Product, SilpoMCPClient
+from core.mcp_client import DeliveryContext, Product, SilpoMCPClient
 from core.reminders import remind_about_deal
 from core.relevance_scorer import pick_products_for_group
 from db.models import Deal, DealStatus, Group
@@ -70,19 +70,21 @@ def filter_new_deals(
     return result
 
 
+def group_delivery_address(group: Group, settings: Settings) -> str:
+    """Адреса доставки групи (місто) або загальна з налаштувань."""
+    return (group.delivery_address or "").strip() or settings.delivery_address
+
+
 async def scan_promotions(bot: Bot, settings: Settings, session=None, group_id: int | None = None) -> dict:
     """Fetch wholesale deals from MCP and post new ones to active groups.
 
-    When group_id is given, posts only to that group (manual /scan in a group).
-    Otherwise posts to every active group (scheduled job).
+    Groups are grouped by their delivery address: one MCP scan (branch,
+    prices, stock) per unique city. When group_id is given, posts only to
+    that group (manual /scan in a group). Otherwise posts to every active
+    group (scheduled job).
 
     Returns a stats dict: {"posted": [...], "skipped_dup": n, "below_threshold": n}."""
     stats: dict = {"posted": [], "skipped_dup": 0, "below_threshold": 0}
-
-    async with SilpoMCPClient(settings) as mcp:
-        ctx = await mcp.resolve_delivery_context(settings.delivery_address)
-        products = await mcp.get_wholesale_products(ctx)
-    logger.info("fetched %d wholesale products from MCP", len(products))
 
     import datetime as dt
 
@@ -110,90 +112,110 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None, group_id: 
                 logger.warning("no active groups to post to")
                 return stats
 
+        by_address: dict[str, list[Group]] = {}
         for group in groups:
-            cutoff = datetime.now(timezone.utc) - dt.timedelta(days=settings.deal_dup_window_days)
-            existing_ids = set(
-                (
-                    await session.execute(
-                        select(Deal.mcp_product_id).where(
-                            Deal.group_id == group.id,
-                            Deal.created_at >= cutoff,
-                        )
+            address = group_delivery_address(group, settings)
+            by_address.setdefault(address, []).append(group)
+
+        ctx_cache: dict[str, DeliveryContext] = {}
+        products_cache: dict[str, list[Product]] = {}
+        async with SilpoMCPClient(settings) as mcp:
+            for address, address_groups in by_address.items():
+                if address not in products_cache:
+                    ctx = await mcp.resolve_delivery_context(address)
+                    ctx_cache[address] = ctx
+                    products_cache[address] = await mcp.get_wholesale_products(ctx)
+                    logger.info(
+                        "fetched %d wholesale products for '%s'",
+                        len(products_cache[address]),
+                        address,
                     )
-                ).scalars().all()
-            )
-            qualified = filter_new_deals(
-                products, existing_ids, settings.min_discount_percent
-            )
-            stats["below_threshold"] += max(
-                0,
-                len([p for p in products if p.mcp_id not in existing_ids]) - len(qualified),
-            )
-            stats["skipped_dup"] += len(existing_ids)
+                products = products_cache[address]
 
-            # Персональна черга під групу: cold start = топ за знижкою,
-            # далі — релевантність до профілю будинку + explore-слот.
-            ranked = await pick_products_for_group(
-                session,
-                group.id,
-                qualified,
-                daily_limit=settings.max_posts_per_scan,
-                explore_slots=1,
-            )
-            new_deals = ranked
-
-            for product in new_deals:
-                deal = Deal(
-                    group_id=group.id,
-                    mcp_product_id=product.mcp_id,
-                    product_slug=product.slug,
-                    product_name=product.name,
-                    image_url=product.image_url,
-                    unit_price_retail=product.unit_price_retail,
-                    unit_price_wholesale=product.unit_price_wholesale,
-                    wholesale_pack_size=product.wholesale_pack_size,
-                    savings_per_unit=product.savings_per_unit,
-                    weighted=product.weighted,
-                    status=DealStatus.collecting,
-                    deadline_at=deadline,
-                )
-                session.add(deal)
-                await session.flush()  # deal.id for the keyboard
-
-                text = format_deal_text(
-                    product, collected=0, deadline=deadline, tone_profile=group.tone_profile
-                )
-                keyboard = deal_keyboard(deal.id, deal.wholesale_pack_size, deal.weighted)
-                try:
-                    if product.image_url:
-                        message = await bot.send_photo(
-                            chat_id=group.telegram_chat_id,
-                            photo=product.image_url,
-                            caption=text,
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        message = await bot.send_message(
-                            chat_id=group.telegram_chat_id,
-                            text=text,
-                            reply_markup=keyboard,
-                            link_preview_options=LinkPreviewOptions(is_disabled=True),
-                        )
-                except Exception:
-                    logger.exception(
-                        "failed to post deal %s to group %s; skipping", product.name, group.telegram_chat_id
+                for group in address_groups:
+                    cutoff = datetime.now(timezone.utc) - dt.timedelta(days=settings.deal_dup_window_days)
+                    existing_ids = set(
+                        (
+                            await session.execute(
+                                select(Deal.mcp_product_id).where(
+                                    Deal.group_id == group.id,
+                                    Deal.created_at >= cutoff,
+                                )
+                            )
+                        ).scalars().all()
                     )
-                    session.expunge(deal)
-                    continue
-                deal.telegram_message_id = message.message_id
-                stats["posted"].append(f"{group.telegram_chat_id}:{product.name}")
-                logger.info("posted deal #%s '%s' to %s", deal.id, product.name, group.telegram_chat_id)
-                try:
-                    reminded = await remind_about_deal(bot, settings, session, group.id, deal)
-                    if reminded:
-                        logger.info("reminded %d users about deal #%s", reminded, deal.id)
-                except Exception:
-                    logger.exception("reminders for deal #%s failed", deal.id)
+                    qualified = filter_new_deals(
+                        products, existing_ids, settings.min_discount_percent
+                    )
+                    stats["below_threshold"] += max(
+                        0,
+                        len([p for p in products if p.mcp_id not in existing_ids]) - len(qualified),
+                    )
+                    stats["skipped_dup"] += len(existing_ids)
+
+                    # Персональна черга під групу: cold start = топ за знижкою,
+                    # далі — релевантність до профілю будинку + explore-слот.
+                    ranked = await pick_products_for_group(
+                        session,
+                        group.id,
+                        qualified,
+                        daily_limit=settings.max_posts_per_scan,
+                        explore_slots=1,
+                    )
+                    new_deals = ranked
+
+                    for product in new_deals:
+                        deal = Deal(
+                            group_id=group.id,
+                            mcp_product_id=product.mcp_id,
+                            product_slug=product.slug,
+                            product_name=product.name,
+                            image_url=product.image_url,
+                            unit_price_retail=product.unit_price_retail,
+                            unit_price_wholesale=product.unit_price_wholesale,
+                            wholesale_pack_size=product.wholesale_pack_size,
+                            savings_per_unit=product.savings_per_unit,
+                            weighted=product.weighted,
+                            status=DealStatus.collecting,
+                            deadline_at=deadline,
+                        )
+                        session.add(deal)
+                        await session.flush()  # deal.id for the keyboard
+
+                        text = format_deal_text(
+                            product, collected=0, deadline=deadline, tone_profile=group.tone_profile
+                        )
+                        keyboard = deal_keyboard(deal.id, deal.wholesale_pack_size, deal.weighted)
+                        try:
+                            if product.image_url:
+                                message = await bot.send_photo(
+                                    chat_id=group.telegram_chat_id,
+                                    photo=product.image_url,
+                                    caption=text,
+                                    reply_markup=keyboard,
+                                )
+                            else:
+                                message = await bot.send_message(
+                                    chat_id=group.telegram_chat_id,
+                                    text=text,
+                                    reply_markup=keyboard,
+                                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                                )
+                        except Exception:
+                            logger.exception(
+                                "failed to post deal %s to group %s; skipping", product.name, group.telegram_chat_id
+                            )
+                            session.expunge(deal)
+                            continue
+                        deal.telegram_message_id = message.message_id
+                        stats["posted"].append(f"{group.telegram_chat_id}:{product.name}")
+                        logger.info("posted deal #%s '%s' to %s", deal.id, product.name, group.telegram_chat_id)
+                        try:
+                            reminded = await remind_about_deal(bot, settings, session, group.id, deal)
+                            if reminded:
+                                logger.info("reminded %d users about deal #%s", reminded, deal.id)
+                        except Exception:
+                            logger.exception("reminders for deal #%s failed", deal.id)
 
         await session.commit()
     finally:

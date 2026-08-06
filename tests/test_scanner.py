@@ -1,5 +1,7 @@
+from core.config import Settings
 from core.mcp_client import Product
-from core.promo_scanner import filter_new_deals, parse_scan_times
+from core.promo_scanner import filter_new_deals, group_delivery_address, parse_scan_times
+from db.models import Group
 
 
 def _product(mcp_id: str, retail: float, wholesale: float, pack: int, in_stock: bool = True) -> Product:
@@ -67,6 +69,20 @@ def test_parse_scan_times():
     assert parse_scan_times(" 08:30 , 8:30 ") == [(8, 30)]
     assert parse_scan_times("25:00,bad,18:45") == [(18, 45)]
     assert parse_scan_times("") == []
+
+
+def test_group_delivery_address_falls_back_to_settings():
+    settings = Settings(telegram_bot_token="x")
+    group = Group(telegram_chat_id=1)
+    assert group_delivery_address(group, settings) == settings.delivery_address
+
+
+def test_group_delivery_address_uses_group_city():
+    settings = Settings(telegram_bot_token="x")
+    group = Group(telegram_chat_id=1, delivery_address="Львів")
+    assert group_delivery_address(group, settings) == "Львів"
+    group.delivery_address = "   "
+    assert group_delivery_address(group, settings) == settings.delivery_address
 
 
 def test_product_from_mcp_quantity_logic():

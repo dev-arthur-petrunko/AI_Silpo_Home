@@ -301,3 +301,15 @@ class SilpoMCPClient:
                 products.append(product)
         logger.info("fetched %d wholesale products (promotion=%s)", len(products), promotion_code)
         return products
+
+    async def get_product_details(self, ctx: DeliveryContext, slug: str) -> dict[str, Any]:
+        return await self.call_tool(
+            "silpo_get_product_details",
+            {
+                "branchId": ctx.branch_id,
+                "slug": slug,
+                "deliveryType": ctx.delivery_type,
+                "timeslotStart": ctx.timeslot_start,
+                "timeslotEnd": ctx.timeslot_end,
+            },
+        )

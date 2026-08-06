@@ -12,21 +12,27 @@ from sqlalchemy import select
 
 from bot.commands import WELCOME_TEXT, set_chat_menu, set_default_menu, set_manager_menu
 from bot.keyboards import (
+    CITY_SETTINGS,
     DEAL_INFO,
     HOUSE_CHECKOUT,
     HOUSE_STATUS,
     HOUSE_THINKING,
+    city_picker_keyboard,
+    city_settings_keyboard,
     deal_keyboard,
     deal_step,
     manager_status_keyboard,
     order_keyboard,
+    parse_city_pick,
     parse_deal_dec,
     parse_deal_inc,
     parse_deal_join,
+    parse_deal_stock,
     parse_manager_status,
 )
 from bot.texts import fmt_qty, format_deal_record, order_status_text, pack_unit
 from core.config import Settings, get_settings
+from core.mcp_client import SilpoMCPClient
 from core.orders import (
     OPEN_STATUSES,
     build_house_order_summary,
@@ -36,7 +42,7 @@ from core.orders import (
     send_house_order_to_manager,
     update_draft,
 )
-from core.promo_scanner import schedule_jobs, scan_promotions
+from core.promo_scanner import group_delivery_address, schedule_jobs, scan_promotions
 from core.tone_profiler import store_message
 from db.models import Deal, DealStatus, Group, Participant, TelegramUser
 from db.session import dispose_engine, get_sessionmaker, init_engine
@@ -181,6 +187,25 @@ async def edit_deal_post(
         except TelegramBadRequest:
             logger.warning("could not edit deal %s post", deal.id)
             return
+
+
+async def check_deal_stock(settings: Settings, deal: Deal, address: str) -> str:
+    """Актуальна наявність товару в магазині через MCP."""
+    if not deal.product_slug:
+        return f"Не можу перевірити: для «{deal.product_name}» немає slug."
+    async with SilpoMCPClient(settings) as mcp:
+        ctx = await mcp.resolve_delivery_context(address)
+        details = await mcp.get_product_details(ctx, deal.product_slug)
+    product = details.get("product") or {}
+    stock = product.get("stock") or 0
+    available = bool(product.get("available"))
+    unit = pack_unit(deal.weighted)
+    if available and stock > 0:
+        return (
+            f"✅ <b>Є в наявності:</b> «{deal.product_name}»\n"
+            f"Залишок у магазині: <b>{fmt_qty(stock)} {unit}</b>"
+        )
+    return f"❌ <b>Розпродано:</b> «{deal.product_name}» зараз недоступний у магазині."
 
 
 async def reset_house_order(session, group: Group) -> list[Deal]:
@@ -347,13 +372,37 @@ async def main() -> None:
         finally:
             await session.close()
 
+    @dp.message(Command("settings"))
+    async def cmd_settings(message: Message) -> None:
+        if message.chat.type not in ("group", "supergroup"):
+            await message.answer("Ця команда працює тільки в групах.")
+            return
+        session = get_sessionmaker()()
+        try:
+            group = (
+                await session.execute(
+                    select(Group).where(Group.telegram_chat_id == message.chat.id)
+                )
+            ).scalar_one_or_none()
+            if group is None:
+                await message.answer("Групу не зареєстровано.")
+                return
+            current = group.delivery_address or settings.delivery_address
+        finally:
+            await session.close()
+        await message.answer(
+            f"🌆 <b>Місто цієї групи:</b> {current}\n"
+            "Ціни, наявність і розмір партій рахуємо для цього міста.\n"
+            "Змінити місто може адміністратор.",
+            reply_markup=city_settings_keyboard(group.delivery_address),
+        )
+
     @dp.message(Command("debug"))
     async def cmd_debug(message: Message) -> None:
         await message.answer(
             f"Бот живий.\nЧат: {message.chat.id}\nСкан: {settings.scan_times} "
             f"({settings.scan_timezone})\nМін. знижка: {settings.min_discount_percent}%"
         )
-
     @dp.message(Command("scan"))
     async def cmd_scan(message: Message) -> None:
         group_id = None
@@ -635,6 +684,92 @@ async def main() -> None:
         finally:
             await session.close()
 
+    async def _handle_stock_check(callback: CallbackQuery, deal_id: int) -> None:
+        chat = callback.message.chat
+        session = get_sessionmaker()()
+        try:
+            deal = (
+                await session.execute(select(Deal).where(Deal.id == deal_id))
+            ).scalar_one_or_none()
+            group = None
+            if deal is not None:
+                group = (
+                    await session.execute(select(Group).where(Group.id == deal.group_id))
+                ).scalar_one_or_none()
+        finally:
+            await session.close()
+        if deal is None or group is None:
+            await callback.answer("Угоду не знайдено")
+            return
+        await callback.answer("Перевіряю наявність у магазині…", show_alert=False)
+        try:
+            address = group_delivery_address(group, settings)
+            text = await check_deal_stock(settings, deal, address)
+        except Exception as exc:
+            logger.exception("stock check failed for deal %s", deal_id)
+            text = f"Не вдалось перевірити наявність: {exc}"
+        await bot.send_message(chat.id, text)
+
+    async def _load_group_by_chat(callback: CallbackQuery):
+        session = get_sessionmaker()()
+        try:
+            return (
+                await session.execute(
+                    select(Group).where(Group.telegram_chat_id == callback.message.chat.id)
+                )
+            ).scalar_one_or_none()
+        finally:
+            await session.close()
+
+    async def _handle_city_settings(callback: CallbackQuery) -> None:
+        chat = callback.message.chat
+        if chat.type not in ("group", "supergroup"):
+            await callback.answer("Тільки в групах")
+            return
+        if not await _is_admin(bot, chat.id, callback.from_user.id):
+            await callback.answer("Змінити місто може лише адміністратор")
+            return
+        group = await _load_group_by_chat(callback)
+        if group is None:
+            await callback.answer("Групу не зареєстровано")
+            return
+        await callback.answer()
+        await callback.message.edit_text(
+            "🌆 <b>Оберіть місто групи</b> — ціни, наявність і розмір партій "
+            "рахуємо для нього (поки не зміниш):",
+            reply_markup=city_picker_keyboard(group.delivery_address),
+        )
+
+    async def _handle_city_pick(callback: CallbackQuery, city: str) -> None:
+        chat = callback.message.chat
+        if chat.type not in ("group", "supergroup"):
+            await callback.answer("Тільки в групах")
+            return
+        if not await _is_admin(bot, chat.id, callback.from_user.id):
+            await callback.answer("Змінити місто може лише адміністратор")
+            return
+        session = get_sessionmaker()()
+        try:
+            group = (
+                await session.execute(
+                    select(Group).where(Group.telegram_chat_id == chat.id)
+                )
+            ).scalar_one_or_none()
+            if group is None:
+                await callback.answer("Групу не зареєстровано")
+                return
+            group.delivery_address = city
+            await session.commit()
+        finally:
+            await session.close()
+        await callback.answer(f"✅ Місто групи: {city}")
+        await callback.message.edit_text(
+            f"🌆 <b>Місто групи змінено:</b> {city}\n"
+            "Наступні скани та перевірка наявності використовуватимуть ціни "
+            "й залишки цього міста.",
+            reply_markup=city_settings_keyboard(city),
+        )
+
     @dp.callback_query()
     async def on_callback(callback: CallbackQuery) -> None:
         data = callback.data or ""
@@ -644,6 +779,20 @@ async def main() -> None:
 
         if data in (HOUSE_THINKING, HOUSE_CHECKOUT, HOUSE_STATUS):
             await _handle_house_order(callback)
+            return
+
+        if data == CITY_SETTINGS:
+            await _handle_city_settings(callback)
+            return
+
+        city = parse_city_pick(data)
+        if city is not None:
+            await _handle_city_pick(callback, city)
+            return
+
+        stock_id = parse_deal_stock(data)
+        if stock_id is not None:
+            await _handle_stock_check(callback, stock_id)
             return
 
         join_id = parse_deal_join(data)

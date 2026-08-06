@@ -7,6 +7,7 @@ STANDARD_COMMANDS = [
     BotCommand(command="status", description="📊 Статус замовлення"),
     BotCommand(command="scan", description="🔍 Сканувати акції"),
     BotCommand(command="reset", description="🔄 Сброс списку замовлення (адмін/власник)"),
+    BotCommand(command="settings", description="🌆 Місто групи"),
     BotCommand(command="debug", description="ℹ️ Статус бота"),
     BotCommand(command="register", description="✅ Зареєструвати групу"),
 ]
@@ -40,6 +41,7 @@ WELCOME_TEXT = (
     "• <b>/status</b> — статус замовлення будинку\n"
     "• <b>/scan</b> — запустити скан угод\n"
     "• <b>/reset</b> — адміністратор або власник скидає список замовлення\n"
+    "• <b>/settings</b> — встановити місто групи (одного разу)\n"
     "• <b>/debug</b> — статус бота\n"
     "• <b>/register</b> — зареєструвати цю групу\n\n"
     "Натискай ➕ на постах з угодами, потім ✅ Підтвердити — і товар з'явиться в заказі.\n\n"

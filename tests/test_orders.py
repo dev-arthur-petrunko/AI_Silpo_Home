@@ -1,4 +1,11 @@
-from bot.keyboards import deal_keyboard, parse_deal_dec, parse_deal_inc, parse_deal_join, deal_step
+from bot.keyboards import (
+    deal_keyboard,
+    parse_deal_dec,
+    parse_deal_inc,
+    parse_deal_join,
+    parse_deal_stock,
+    deal_step,
+)
 from bot.texts import (
     fmt_qty,
     format_deal_record,
@@ -116,8 +123,28 @@ def test_deal_keyboard_and_parsers():
     assert "deal:inc:7" in flat
     assert "deal:dec:7" in flat
     assert "deal:join:7" in flat
+    assert "deal:stock:7" in flat
     assert parse_deal_join("deal:join:7") == 7
     assert parse_deal_inc("deal:inc:7") == 7
     assert parse_deal_dec("deal:dec:7") == 7
+    assert parse_deal_stock("deal:stock:7") == 7
     assert parse_deal_join("x") is None
     assert parse_deal_inc("deal:join:7") is None
+    assert parse_deal_stock("deal:join:7") is None
+
+
+def test_city_picker_and_parsers():
+    from bot.keyboards import (
+        CITY_PICK_PREFIX,
+        SUPPORTED_CITIES,
+        city_picker_keyboard,
+        parse_city_pick,
+    )
+
+    kb = city_picker_keyboard("Львів")
+    flat = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    for city in SUPPORTED_CITIES:
+        assert f"{CITY_PICK_PREFIX}{city}" in flat
+    assert parse_city_pick("city:pick:Львів") == "Львів"
+    assert parse_city_pick("city:pick:") is None
+    assert parse_city_pick("deal:join:3") is None
