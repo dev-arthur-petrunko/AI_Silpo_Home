@@ -127,10 +127,17 @@ async def main() -> None:
 
     @dp.message(Command("order"))
     async def cmd_order(message: Message) -> None:
-        chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else None
         session = get_sessionmaker()()
         try:
-            text = await build_order_summary(session, message.from_user.id, chat_id)
+            group_db_id: int | None = None
+            if message.chat.type in ("group", "supergroup"):
+                group = (
+                    await session.execute(
+                        select(Group).where(Group.telegram_chat_id == message.chat.id)
+                    )
+                ).scalar_one_or_none()
+                group_db_id = group.id if group else None
+            text = await build_order_summary(session, message.from_user.id, group_db_id)
         finally:
             await session.close()
         await message.answer(text)
