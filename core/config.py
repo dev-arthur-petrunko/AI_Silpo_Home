@@ -20,9 +20,24 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://localhost:5432/silpo_home"
 
     scan_interval_hours: int = 6
+    close_check_hours: int = 1
     min_discount_percent: float = 50.0
     max_posts_per_scan: int = 10
     deal_default_deadline_days: int = 3
+
+    groq_api_key: str | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions"
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_request_timeout_seconds: float = 30.0
+
+    messages_keep: int = 100
+    tone_min_messages: int = 20
+    tone_refresh_hours: int = 6
+
+    reminders_enabled: bool = True
+    reminder_max_per_deal: int = 3
+    reminder_min_interval_days: int = 7
+    reminder_llm_temperature: float = 0.7
 
     @field_validator("manager_chat_id", mode="before")
     @classmethod

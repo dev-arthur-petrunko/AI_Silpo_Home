@@ -27,9 +27,11 @@ def best_special_price(special_prices: list[dict[str, Any]] | None, retail: floa
     """Pick the wholesale tier that gives the lowest unit price.
 
     `special_prices` entries look like: {"price": 18.99, "count": 3, "type": "from"}.
-    For weighted products `count` is a fractional minimum weight in kg
-    (e.g. 0.5). Tiers with price >= retail (no real discount) are ignored.
-    Among equal prices the smallest count wins (easier for a group to reach).
+    Only tiers of type "from" ("від X штук — така ціна") are considered — that is
+    the native wholesale structure used for the savings calculation. For weighted
+    products `count` is a fractional minimum weight in kg (e.g. 0.5). Tiers with
+    price >= retail (no real discount) are ignored. Among equal prices the
+    smallest count wins (easier for a group to reach).
     """
     if not special_prices or retail is None:
         return None
@@ -38,6 +40,8 @@ def best_special_price(special_prices: list[dict[str, Any]] | None, retail: floa
         price = sp.get("price")
         count = sp.get("count")
         if not isinstance(price, (int, float)) or not isinstance(count, (int, float)):
+            continue
+        if str(sp.get("type", "")).lower() != "from":
             continue
         if count <= 0 or price >= retail:
             continue

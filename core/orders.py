@@ -40,6 +40,35 @@ async def deal_total(session: "AsyncSession", deal_id: int) -> float:
     return float(row.scalar_one() or 0)
 
 
+async def close_deal(session: "AsyncSession", deal: Deal) -> str:
+    """Закриває угоду: goal досягнуто → confirmed, інакше → expired.
+
+    Після закриття перераховує і зберігає профіль групи (для персоналізації).
+    Повертає назву нового статусу.
+    """
+    if deal.status in (
+        DealStatus.confirmed,
+        DealStatus.expired,
+        DealStatus.cancelled,
+        DealStatus.sent_to_manager,
+    ):
+        return deal.status.value
+
+    total = await deal_total(session, deal.id)
+    deal.status = (
+        DealStatus.confirmed
+        if total >= float(deal.wholesale_pack_size)
+        else DealStatus.expired
+    )
+    await session.commit()
+    logger.info("deal %s closed as %s (%.3f/%.3f)", deal.id, deal.status.value, total, deal.wholesale_pack_size)
+
+    from core.relevance_scorer import save_group_profile_vector
+
+    await save_group_profile_vector(session, deal.group_id)
+    return deal.status.value
+
+
 async def apply_quantity(
     session: "AsyncSession",
     deal: Deal,

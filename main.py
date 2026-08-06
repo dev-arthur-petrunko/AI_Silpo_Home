@@ -20,9 +20,10 @@ from bot.keyboards import (
 )
 from bot.texts import fmt_qty, format_deal_record, pack_unit
 from core.config import Settings, get_settings
-from core.orders import OPEN_STATUSES, apply_quantity, build_order_summary
+from core.orders import OPEN_STATUSES, apply_quantity, build_order_summary, close_deal
 from core.promo_scanner import schedule_jobs, scan_promotions
-from db.models import Deal, Group
+from core.tone_profiler import store_message
+from db.models import Deal, Group, TelegramUser
 from db.session import dispose_engine, get_sessionmaker, init_engine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -87,7 +88,30 @@ async def main() -> None:
 
     @dp.message(CommandStart())
     async def cmd_start(message: Message) -> None:
-        await message.answer("Привіт! Я бот спільних закупівель «Сільпо». Групи сусідів з'являться незабаром.")
+        session = get_sessionmaker()()
+        try:
+            user = (
+                await session.execute(
+                    select(TelegramUser).where(
+                        TelegramUser.telegram_user_id == message.from_user.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if user is None:
+                session.add(
+                    TelegramUser(
+                        telegram_user_id=message.from_user.id,
+                        telegram_username=message.from_user.username,
+                        first_name=message.from_user.first_name,
+                    )
+                )
+                await session.commit()
+        finally:
+            await session.close()
+        await message.answer(
+            "Привіт! Я бот спільних закупівель «Сільпо». Групи сусідів з'являться незабаром.\n"
+            "Після цього я зможу нагадувати тобі в приват про партії, які ти зазвичай замовляєш."
+        )
 
     @dp.message(Command("register"))
     async def cmd_register(message: Message) -> None:
@@ -156,6 +180,89 @@ async def main() -> None:
             await session.close()
         await message.answer(text)
 
+    @dp.message(Command("close"))
+    async def cmd_close(message: Message) -> None:
+        if message.chat.type not in ("group", "supergroup"):
+            await message.answer("Ця команда працює тільки в групах.")
+            return
+        try:
+            member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+            if member.status not in ("creator", "administrator"):
+                await message.answer("Закрити угоду може лише адміністратор групи.")
+                return
+        except TelegramBadRequest:
+            await message.answer("Не вдалось перевірити права. Спробуй ще раз.")
+            return
+
+        session = get_sessionmaker()()
+        try:
+            group = (
+                await session.execute(
+                    select(Group).where(Group.telegram_chat_id == message.chat.id)
+                )
+            ).scalar_one_or_none()
+            if group is None:
+                await message.answer("Групу не зареєстровано.")
+                return
+
+            args = message.text.split()
+            deal: Deal | None = None
+            if len(args) > 1:
+                try:
+                    deal = (
+                        await session.execute(select(Deal).where(Deal.id == int(args[1])))
+                    ).scalar_one_or_none()
+                except ValueError:
+                    deal = None
+            elif message.reply_to_message is not None:
+                deal = (
+                    await session.execute(
+                        select(Deal).where(
+                            Deal.group_id == group.id,
+                            Deal.telegram_message_id == message.reply_to_message.message_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+
+            if deal is None:
+                await message.answer("Не знайшов угоду. Вкажи id або відповідай на пост з угодою.")
+                return
+            if deal.group_id != group.id:
+                await message.answer("Ця угода з іншої групи.")
+                return
+
+            status = await close_deal(session, deal)
+            await message.answer(
+                f"Угоду «{deal.product_name}» закрито: "
+                f"{'замовлено ✅' if status == 'confirmed' else 'завершилась без замовлення ⚪'}"
+            )
+        finally:
+            await session.close()
+
+    @dp.message()
+    async def on_group_message(message: Message) -> None:
+        """Збираємо повідомлення груп для тону (без команд, ~100 останніх)."""
+        if message.chat.type not in ("group", "supergroup"):
+            return
+        if message.from_user is None or message.from_user.is_bot:
+            return
+        text = message.text or message.caption or ""
+        if not text.strip() or text.lstrip().startswith("/"):
+            return
+        session = get_sessionmaker()()
+        try:
+            group = (
+                await session.execute(
+                    select(Group).where(Group.telegram_chat_id == message.chat.id)
+                )
+            ).scalar_one_or_none()
+            if group is None:
+                return
+            await store_message(session, group.id, message.from_user.id, text, settings.messages_keep)
+            await session.commit()
+        finally:
+            await session.close()
+
     @dp.callback_query()
     async def on_callback(callback: CallbackQuery) -> None:
         data = callback.data or ""
@@ -206,7 +313,7 @@ async def main() -> None:
                     delta,
                 )
 
-                text = format_deal_record(deal, collected=deal_total)
+                text = format_deal_record(deal, collected=deal_total, tone_profile=group.tone_profile)
                 keyboard = deal_keyboard(deal.id, deal.wholesale_pack_size, deal.weighted)
                 try:
                     if deal.image_url:

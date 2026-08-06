@@ -2,6 +2,7 @@ from datetime import datetime
 
 from core.mcp_client import Product
 from core.savings import calc_discount_percent, calc_savings
+from core.tone_profiler import tone_intro, tone_outro
 
 WHOLESALE_PROMO_LABEL = "Гуртом дешевше"
 
@@ -32,6 +33,8 @@ def _deal_lines(
     discount: float,
     collected: float,
     deadline: datetime | None,
+    intro: str | None = None,
+    outro: str | None = None,
 ) -> str:
     deadline_str = deadline.strftime("%d.%m %H:%M") if deadline else "—"
     unit = pack_unit(weighted)
@@ -47,6 +50,10 @@ def _deal_lines(
         f"Зібрано: <b>{fmt_qty(collected)}/{pack_s} {unit}</b>",
         f"Дедлайн збору: {deadline_str}",
     ]
+    if intro:
+        lines.insert(0, intro)
+    if outro:
+        lines.append(outro)
     return "\n".join(lines)
 
 
@@ -55,6 +62,7 @@ def format_deal_text(
     collected: float = 0,
     deadline: datetime | None = None,
     deadline_days: int | None = None,
+    tone_profile: dict | None = None,
 ) -> str:
     if deadline is None and deadline_days is not None:
         import datetime as dt
@@ -70,10 +78,14 @@ def format_deal_text(
         product.discount_percent,
         collected,
         deadline,
+        intro=tone_intro(tone_profile),
+        outro=tone_outro(tone_profile),
     )
 
 
-def format_deal_record(deal, collected: float = 0, deadline: datetime | None = None) -> str:
+def format_deal_record(
+    deal, collected: float = 0, deadline: datetime | None = None, tone_profile: dict | None = None
+) -> str:
     """Format a persisted Deal ORM row back into a post caption."""
     import datetime as dt
 
@@ -90,6 +102,8 @@ def format_deal_record(deal, collected: float = 0, deadline: datetime | None = N
         discount,
         collected,
         deadline,
+        intro=tone_intro(tone_profile),
+        outro=tone_outro(tone_profile),
     )
 
 

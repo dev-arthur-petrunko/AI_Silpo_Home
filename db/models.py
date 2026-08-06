@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
@@ -35,11 +36,44 @@ class Group(Base):
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     house_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    profile_vector: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tone_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     deals: Mapped[list["Deal"]] = relationship(back_populates="group")
+    messages: Mapped[list["GroupMessage"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class GroupMessage(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), index=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    group: Mapped[Group] = relationship(back_populates="messages")
+
+
+class TelegramUser(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("telegram_user_id", name="uq_user_telegram_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger)
+    telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Deal(Base):

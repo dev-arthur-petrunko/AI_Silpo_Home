@@ -11,6 +11,8 @@ from bot.keyboards import deal_keyboard
 from bot.texts import format_deal_text
 from core.config import Settings
 from core.mcp_client import Product, SilpoMCPClient
+from core.reminders import remind_about_deal
+from core.relevance_scorer import pick_products_for_group
 from db.models import Deal, DealStatus, Group
 from db.session import get_sessionmaker
 
@@ -85,18 +87,25 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
                     )
                 ).scalars().all()
             )
-            qualified = filter_new_deals(products, existing_ids, settings.min_discount_percent)
-            new_deals = filter_new_deals(
-                products,
-                existing_ids,
-                settings.min_discount_percent,
-                settings.max_posts_per_scan,
+            qualified = filter_new_deals(
+                products, existing_ids, settings.min_discount_percent
             )
             stats["below_threshold"] += max(
                 0,
                 len([p for p in products if p.mcp_id not in existing_ids]) - len(qualified),
             )
             stats["skipped_dup"] += len(existing_ids)
+
+            # Персональна черга під групу: cold start = топ за знижкою,
+            # далі — релевантність до профілю будинку + explore-слот.
+            ranked = await pick_products_for_group(
+                session,
+                group.id,
+                qualified,
+                daily_limit=settings.max_posts_per_scan,
+                explore_slots=1,
+            )
+            new_deals = ranked
 
             for product in new_deals:
                 deal = Deal(
@@ -115,7 +124,9 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
                 session.add(deal)
                 await session.flush()  # deal.id for the keyboard
 
-                text = format_deal_text(product, collected=0, deadline=deadline)
+                text = format_deal_text(
+                    product, collected=0, deadline=deadline, tone_profile=group.tone_profile
+                )
                 keyboard = deal_keyboard(deal.id, deal.wholesale_pack_size, deal.weighted)
                 try:
                     if product.image_url:
@@ -140,6 +151,12 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
                 deal.telegram_message_id = message.message_id
                 stats["posted"].append(f"{group.telegram_chat_id}:{product.name}")
                 logger.info("posted deal #%s '%s' to %s", deal.id, product.name, group.telegram_chat_id)
+                try:
+                    reminded = await remind_about_deal(bot, settings, session, group.id, deal)
+                    if reminded:
+                        logger.info("reminded %d users about deal #%s", reminded, deal.id)
+                except Exception:
+                    logger.exception("reminders for deal #%s failed", deal.id)
 
         await session.commit()
     finally:
@@ -158,3 +175,82 @@ def schedule_jobs(scheduler: AsyncIOScheduler, bot: Bot, settings: Settings) -> 
         max_instances=1,
         coalesce=True,
     )
+    scheduler.add_job(
+        close_expired_deals,
+        trigger="interval",
+        hours=settings.close_check_hours,
+        kwargs={"settings": settings},
+        id="close_expired_deals",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        refresh_group_tones,
+        trigger="interval",
+        hours=settings.tone_refresh_hours,
+        kwargs={"settings": settings},
+        id="refresh_group_tones",
+        max_instances=1,
+        coalesce=True,
+    )
+
+
+async def close_expired_deals(settings: Settings, session=None) -> int:
+    """Авто-закриття відкритих угод, чий дедлайн минув (confirmed/expired)."""
+    import datetime as dt
+
+    from core.orders import close_deal
+
+    own_session = session is None
+    if session is None:
+        session = get_sessionmaker()()
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        deals = (
+            await session.execute(
+                select(Deal).where(
+                    Deal.status.in_(OPEN_STATUSES),
+                    Deal.deadline_at.is_not(None),
+                    Deal.deadline_at < now,
+                )
+            )
+        ).scalars().all()
+        closed = 0
+        for deal in deals:
+            status = await close_deal(session, deal)
+            if status in ("confirmed", "expired"):
+                closed += 1
+        if closed:
+            logger.info("auto-closed %d expired deals", closed)
+        return closed
+    finally:
+        if own_session:
+            await session.close()
+
+
+async def refresh_group_tones(settings: Settings, session=None) -> int:
+    """Одноразовий розрахунок тону для груп, де набралось >= tone_min_messages."""
+    from core.tone_profiler import analyze_group_tone
+
+    own_session = session is None
+    if session is None:
+        session = get_sessionmaker()()
+    try:
+        groups = (
+            await session.execute(select(Group).where(Group.is_active.is_(True)))
+        ).scalars().all()
+        done = 0
+        for group in groups:
+            if group.tone_profile is not None:
+                continue
+            try:
+                if await analyze_group_tone(session, settings, group):
+                    done += 1
+            except Exception:
+                logger.exception("tone analysis failed for group %s", group.id)
+        if done:
+            logger.info("computed tone profiles for %d groups", done)
+        return done
+    finally:
+        if own_session:
+            await session.close()
