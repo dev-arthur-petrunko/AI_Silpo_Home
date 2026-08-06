@@ -7,6 +7,12 @@ from core.tone_profiler import tone_intro, tone_outro
 WHOLESALE_PROMO_LABEL = "Гуртом дешевше"
 
 
+def product_url(slug: str | None) -> str | None:
+    if not slug:
+        return None
+    return f"https://silpo.ua/product/{slug}"
+
+
 def fmt_price(value: float | int) -> str:
     if isinstance(value, float) and value == int(value):
         return f"{int(value)}"
@@ -35,21 +41,44 @@ def _deal_lines(
     deadline: datetime | None,
     intro: str | None = None,
     outro: str | None = None,
+    slug: str | None = None,
 ) -> str:
     deadline_str = deadline.strftime("%d.%m %H:%M") if deadline else "—"
     unit = pack_unit(weighted)
     pack_s = fmt_qty(pack)
-    lines = [
-        f"🛒 <b>{name}</b> — акція «{WHOLESALE_PROMO_LABEL}»!",
-        f"Партія: <b>{pack_s} {unit}</b>",
-        f"Ціна в партії: <b>{fmt_price(wholesale)}₴/{unit}</b> "
-        f"(роздріб: {fmt_price(retail)}₴/{unit})",
-        f"Твоя економія: <b>{fmt_price(savings)}₴</b> на {unit} "
-        f"({fmt_price(discount)}%)",
+    header = f"🛒 <b>{name}</b> — акція «{WHOLESALE_PROMO_LABEL}»!"
+    party = f"📦 Партія: <b>{pack_s} {unit}</b>"
+    if weighted:
+        r100, w100 = retail / 10, wholesale / 10
+        s100 = savings / 10
+        lines = [
+            header,
+            party,
+            f"🏷️ В магазині: роздріб <b>{fmt_price(r100)}₴/100г</b>, "
+            f"від {pack_s} кг — <b>{fmt_price(w100)}₴/100г</b>",
+            f"💰 Твоя економія: <b>{fmt_price(s100)}₴/100г</b> "
+            f"({fmt_price(discount)}%)",
+            f"⚖️ За кг: <b>{fmt_price(wholesale)}₴/кг</b> замість "
+            f"<b>{fmt_price(retail)}₴/кг</b> — вигода <b>{fmt_price(savings)}₴/кг</b>",
+        ]
+    else:
+        lines = [
+            header,
+            party,
+            f"🏷️ Роздріб: <b>{fmt_price(retail)}₴/{unit}</b>",
+            f"🎁 Від {pack_s} {unit}: <b>{fmt_price(wholesale)}₴/{unit}</b>",
+            f"💰 Твоя економія: <b>{fmt_price(savings)}₴/{unit}</b> "
+            f"({fmt_price(discount)}%)",
+        ]
+    lines += [
         "",
-        f"Зібрано: <b>{fmt_qty(collected)}/{pack_s} {unit}</b>",
-        f"Дедлайн збору: {deadline_str}",
+        f"👥 Зібрано: <b>{fmt_qty(collected)}/{pack_s} {unit}</b>",
+        f"⏰ Дедлайн збору: {deadline_str}",
     ]
+    if slug:
+        url = product_url(slug)
+        if url:
+            lines.append(f"🔗 <a href=\"{url}\">Сторінка товару на silpo.ua</a>")
     if intro:
         lines.insert(0, intro)
     if outro:
@@ -80,19 +109,28 @@ def format_deal_text(
         deadline,
         intro=tone_intro(tone_profile),
         outro=tone_outro(tone_profile),
+        slug=product.slug,
     )
 
 
 def format_deal_record(
-    deal, collected: float = 0, deadline: datetime | None = None, tone_profile: dict | None = None
+    deal,
+    collected: float = 0,
+    pending: list[tuple[str, float]] | None = None,
+    deadline: datetime | None = None,
+    tone_profile: dict | None = None,
 ) -> str:
-    """Format a persisted Deal ORM row back into a post caption."""
+    """Format a persisted Deal ORM row back into a post caption.
+
+    `pending` — список (ім'я, кількість) не підтверджених чернеток, які
+    показуються на пості як «очікує підтвердження», але ще не в замовленні.
+    """
     import datetime as dt
 
     if deadline is None:
         deadline = deal.deadline_at
     discount = calc_discount_percent(deal.unit_price_retail, deal.unit_price_wholesale)
-    return _deal_lines(
+    text = _deal_lines(
         deal.product_name,
         float(deal.unit_price_retail),
         float(deal.unit_price_wholesale),
@@ -104,7 +142,16 @@ def format_deal_record(
         deadline,
         intro=tone_intro(tone_profile),
         outro=tone_outro(tone_profile),
+        slug=getattr(deal, "product_slug", None),
     )
+    if pending:
+        unit = pack_unit(deal.weighted)
+        lines = [f"🔸 Очікує підтвердження:"]
+        lines += [
+            f"• {who}: <b>+{fmt_qty(qty)} {unit}</b>" for who, qty in pending
+        ]
+        text += "\n" + "\n".join(lines)
+    return text
 
 
 def format_order_text(
@@ -123,6 +170,30 @@ def format_order_text(
     return "\n".join(parts)
 
 
-def format_manager_summary() -> str:
-    """Placeholder for Phase 5 consolidated order text."""
+def format_manager_deal_summary(
+    deal_id: int,
+    product_name: str,
+    unit: str,
+    lines: list[str],
+    total_qty: float,
+    total_cost: float,
+    total_savings: float,
+    product_url: str | None = None,
+) -> str:
+    """Consolidated order for one closed deal, posted to the manager group."""
+    name_line = (
+        f"<a href=\"{product_url}\"><b>{product_name}</b></a>"
+        if product_url
+        else f"<b>{product_name}</b>"
+    )
+    parts = [
+        f"🛒 <b>ЗАМОВЛЕННЯ #{deal_id}</b>",
+        name_line,
+        "",
+        *lines,
+        "",
+        f"💰 Разом: <b>{fmt_qty(total_qty)} {unit}</b> на суму <b>{fmt_price(total_cost)}₴</b>",
+        f"💚 Економія: <b>{fmt_price(total_savings)}₴</b>",
+    ]
+    return "\n".join(parts)
     return "📦 Зведене замовлення формується у наступній фазі."

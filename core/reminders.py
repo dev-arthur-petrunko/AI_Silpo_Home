@@ -102,7 +102,10 @@ async def reminder_candidates(
 
     existing_participants = (
         await session.execute(
-            select(Participant.telegram_user_id).where(Participant.deal_id == deal_id)
+            select(Participant.telegram_user_id).where(
+                Participant.deal_id == deal_id,
+                Participant.confirmed.is_(True),
+            )
         )
     ).scalars().all()
     existing = set(existing_participants)
@@ -116,7 +119,10 @@ async def reminder_candidates(
         if user.telegram_user_id in existing:
             continue
         if user.last_reminder_at is not None:
-            age_days = (now - user.last_reminder_at).total_seconds() / 86400.0
+            last_reminder = user.last_reminder_at
+            if last_reminder.tzinfo is None:
+                last_reminder = last_reminder.replace(tzinfo=timezone.utc)
+            age_days = (now - last_reminder).total_seconds() / 86400.0
             if age_days < min_interval:
                 continue
         dates = await user_category_joins(session, group_id, user.telegram_user_id)

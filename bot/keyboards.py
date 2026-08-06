@@ -4,6 +4,26 @@ DEAL_JOIN_PREFIX = "deal:join:"
 DEAL_INC_PREFIX = "deal:inc:"
 DEAL_DEC_PREFIX = "deal:dec:"
 DEAL_INFO = "deal:info"
+HOUSE_THINKING = "house:thinking"
+HOUSE_CHECKOUT = "house:checkout"
+
+
+def order_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки після /order: ще думаємо / оформити для менеджера."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🤔 Ще думаємо",
+                    callback_data=HOUSE_THINKING,
+                ),
+                InlineKeyboardButton(
+                    text="📦 Оформити замовлення для менеджера",
+                    callback_data=HOUSE_CHECKOUT,
+                ),
+            ],
+        ]
+    )
 
 
 def deal_step(weighted: bool) -> float:
@@ -29,11 +49,13 @@ def deal_keyboard(deal_id: int, pack_size: float, weighted: bool = False) -> Inl
             ],
             [
                 InlineKeyboardButton(
-                    text="Приєднатись",
+                    text="✅ Підтвердити",
                     callback_data=f"{DEAL_JOIN_PREFIX}{deal_id}",
                 ),
+            ],
+            [
                 InlineKeyboardButton(
-                    text=f"Партія: {pack} {unit}",
+                    text=f"📦 Партія: {pack} {unit}",
                     callback_data=DEAL_INFO,
                 ),
             ],

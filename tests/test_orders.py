@@ -1,5 +1,14 @@
 from bot.keyboards import deal_keyboard, parse_deal_dec, parse_deal_inc, parse_deal_join, deal_step
-from bot.texts import fmt_qty, format_deal_record, format_order_text, pack_unit
+from bot.texts import (
+    fmt_qty,
+    format_deal_record,
+    format_deal_text,
+    format_manager_deal_summary,
+    format_order_text,
+    pack_unit,
+    product_url,
+)
+from core.mcp_client import Product
 from core.orders import next_quantity, should_remove
 
 
@@ -16,6 +25,7 @@ def _fake_deal(**overrides):
     deal.savings_per_unit = 883.1
     deal.weighted = True
     deal.deadline_at = None
+    deal.product_slug = "burrata"
     for key, value in overrides.items():
         setattr(deal, key, value)
     return deal
@@ -49,6 +59,50 @@ def test_format_deal_record_piece():
     assert "3 шт" in text
     assert "18.99₴/шт" in text
     assert "Зібрано: <b>2/3 шт</b>" in text
+
+
+def test_product_url():
+    assert product_url("burrata") == "https://silpo.ua/product/burrata"
+    assert product_url(None) is None
+    assert product_url("") is None
+
+
+def test_format_deal_record_with_link():
+    text = format_deal_record(_fake_deal(), collected=1.0)
+    assert '<a href="https://silpo.ua/product/burrata">' in text
+    assert "Сторінка товару на silpo.ua" in text
+    text_no_link = format_deal_record(_fake_deal(product_slug=None), collected=1.0)
+    assert "silpo.ua" not in text_no_link
+
+
+def test_format_deal_text_with_link():
+    product = Product(
+        mcp_id="m1",
+        slug="burrata",
+        name="Сир Буррата",
+        image_url=None,
+        unit_price_retail=949,
+        unit_price_wholesale=65.9,
+        wholesale_pack_size=0.5,
+        savings_per_unit=883.1,
+        discount_percent=93,
+        in_stock=True,
+        weighted=True,
+    )
+    text = format_deal_text(product)
+    assert '<a href="https://silpo.ua/product/burrata">' in text
+
+
+def test_format_manager_deal_summary_with_link():
+    text = format_manager_deal_summary(
+        7, "Сир Буррата", "кг", ["• User: 1 кг"], 1, 65.9, 883.1,
+        product_url="https://silpo.ua/product/burrata",
+    )
+    assert '<a href="https://silpo.ua/product/burrata">' in text
+    text_no_link = format_manager_deal_summary(
+        7, "Сир Буррата", "кг", ["• User: 1 кг"], 1, 65.9, 883.1
+    )
+    assert "silpo.ua" not in text_no_link
 
 
 def test_format_order_text():

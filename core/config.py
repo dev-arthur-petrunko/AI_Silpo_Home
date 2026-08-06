@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = Field(..., min_length=1)
     manager_chat_id: int | None = None
+    manager_bot_token: str | None = None
 
     mcp_server_url: str = Field(default="https://mcp.silpo.ua/mcp")
     mcp_api_key: str | None = None
@@ -20,7 +21,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://localhost:5432/silpo_home"
 
     scan_interval_hours: int = 6
-    close_check_hours: int = 1
     min_discount_percent: float = 25.0
     max_posts_per_scan: int = 10
     deal_default_deadline_days: int = 3

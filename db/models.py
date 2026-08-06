@@ -38,6 +38,8 @@ class Group(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     profile_vector: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tone_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    delivery_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    checkout_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -70,6 +72,9 @@ class TelegramUser(Base):
     telegram_user_id: Mapped[int] = mapped_column(BigInteger)
     telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -82,6 +87,7 @@ class Deal(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), index=True)
     mcp_product_id: Mapped[str] = mapped_column(String(64), index=True)
+    product_slug: Mapped[str | None] = mapped_column(String(255), nullable=True)
     product_name: Mapped[str] = mapped_column(String(512))
     image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     unit_price_retail: Mapped[float] = mapped_column(Numeric(10, 2))

@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterable
 
 from aiogram import Bot
+from aiogram.types import LinkPreviewOptions
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
@@ -111,6 +112,7 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
                 deal = Deal(
                     group_id=group.id,
                     mcp_product_id=product.mcp_id,
+                    product_slug=product.slug,
                     product_name=product.name,
                     image_url=product.image_url,
                     unit_price_retail=product.unit_price_retail,
@@ -141,6 +143,7 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
                             chat_id=group.telegram_chat_id,
                             text=text,
                             reply_markup=keyboard,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
                 except Exception:
                     logger.exception(
@@ -176,15 +179,6 @@ def schedule_jobs(scheduler: AsyncIOScheduler, bot: Bot, settings: Settings) -> 
         coalesce=True,
     )
     scheduler.add_job(
-        close_expired_deals,
-        trigger="interval",
-        hours=settings.close_check_hours,
-        kwargs={"settings": settings},
-        id="close_expired_deals",
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
         refresh_group_tones,
         trigger="interval",
         hours=settings.tone_refresh_hours,
@@ -193,39 +187,6 @@ def schedule_jobs(scheduler: AsyncIOScheduler, bot: Bot, settings: Settings) -> 
         max_instances=1,
         coalesce=True,
     )
-
-
-async def close_expired_deals(settings: Settings, session=None) -> int:
-    """Авто-закриття відкритих угод, чий дедлайн минув (confirmed/expired)."""
-    import datetime as dt
-
-    from core.orders import close_deal
-
-    own_session = session is None
-    if session is None:
-        session = get_sessionmaker()()
-    try:
-        now = dt.datetime.now(dt.timezone.utc)
-        deals = (
-            await session.execute(
-                select(Deal).where(
-                    Deal.status.in_(OPEN_STATUSES),
-                    Deal.deadline_at.is_not(None),
-                    Deal.deadline_at < now,
-                )
-            )
-        ).scalars().all()
-        closed = 0
-        for deal in deals:
-            status = await close_deal(session, deal)
-            if status in ("confirmed", "expired"):
-                closed += 1
-        if closed:
-            logger.info("auto-closed %d expired deals", closed)
-        return closed
-    finally:
-        if own_session:
-            await session.close()
 
 
 async def refresh_group_tones(settings: Settings, session=None) -> int:
