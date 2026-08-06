@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
+from bot.commands import WELCOME_TEXT, set_chat_menu, set_default_menu
 from bot.keyboards import (
     DEAL_INFO,
     deal_keyboard,
@@ -29,6 +30,15 @@ logger = logging.getLogger("main")
 
 ACTIVE_MEMBER_STATUSES = {"member", "administrator", "creator"}
 DEAL_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+async def _set_group_ui(bot: Bot, chat_id: int, send_welcome: bool = False) -> None:
+    try:
+        await set_chat_menu(bot, chat_id)
+        if send_welcome:
+            await bot.send_message(chat_id, WELCOME_TEXT)
+    except TelegramBadRequest as exc:
+        logger.warning("could not set menu/welcome for %s: %s", chat_id, exc)
 
 
 async def main() -> None:
@@ -66,10 +76,12 @@ async def main() -> None:
                 elif not group.is_active:
                     group.is_active = True
                     logger.info("bot re-added to group %s", event.chat.id)
+                await session.commit()
+                await _set_group_ui(bot, event.chat.id, send_welcome=True)
             elif group is not None and group.is_active:
                 group.is_active = False
+                await session.commit()
                 logger.info("bot removed from group %s (%s)", event.chat.id, event.chat.title)
-            await session.commit()
         finally:
             await session.close()
 
@@ -101,9 +113,11 @@ async def main() -> None:
                 group.is_active = True
                 group.house_name = message.chat.title
             await session.commit()
+            await _set_group_ui(bot, message.chat.id)
             await message.answer(
                 f"Групу зареєстровано. Сканер надсилатиме сюди угоди зі знижкою "
-                f">= {settings.min_discount_percent:.0f}% (макс {settings.max_posts_per_scan} за скан)."
+                f">= {settings.min_discount_percent:.0f}% (макс {settings.max_posts_per_scan} за скан).\n"
+                "Меню команд доступне біля поля вводу (кнопка «Меню»)."
             )
         finally:
             await session.close()
@@ -226,6 +240,7 @@ async def main() -> None:
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        await set_default_menu(bot)
         logger.info("Polling started")
         await dp.start_polling(bot)
     finally:
