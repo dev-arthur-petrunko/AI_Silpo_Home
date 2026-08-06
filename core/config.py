@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     scan_interval_hours: int = 6
     close_check_hours: int = 1
-    min_discount_percent: float = 50.0
+    min_discount_percent: float = 25.0
     max_posts_per_scan: int = 10
     deal_default_deadline_days: int = 3
 

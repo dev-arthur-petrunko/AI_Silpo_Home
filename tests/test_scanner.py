@@ -115,4 +115,6 @@ def test_product_from_mcp_weighted_keeps_fractional_pack():
     assert product is not None
     assert product.weighted is True
     assert product.wholesale_pack_size == 0.5
-    assert product.unit_price_wholesale == 65.9
+    assert product.unit_price_retail == 949.0
+    assert product.unit_price_wholesale == 659.0
+    assert product.discount_percent == round((949 - 659) / 949 * 100, 2)

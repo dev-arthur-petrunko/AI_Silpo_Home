@@ -55,24 +55,31 @@ class Product(BaseModel):
     def from_mcp(cls, data: dict[str, Any]) -> "Product | None":
         """Build a Product from a `silpo_get_products` item, resolving the
         quantity-tier price (`specialPrices`). Returns None if the item has no
-        wholesale tier or is not available."""
+        wholesale tier or is not available.
+
+        Unit quirk: for weighted products the retail `price` is per kg while the
+        wholesale `specialPrices.price` is per 100 g (Silpo sells weighted items
+        per 100 g). Without normalizing, every weighted product shows a fake
+        ~93% discount, so the wholesale tier is multiplied by 10 (→ per kg)."""
         retail = data.get("price")
         special = best_special_price(data.get("specialPrices"), retail)
         if special is None:
             return None
         stock = data.get("stock") or 0
+        weighted = bool(data.get("weighted"))
+        wholesale = special.price * 10 if weighted else special.price
         return cls(
             mcp_id=str(data["id"]),
             slug=str(data["slug"]),
             name=str(data["name"]),
             image_url=data.get("image"),
             unit_price_retail=round(float(retail), 2),
-            unit_price_wholesale=round(special.price, 2),
+            unit_price_wholesale=round(wholesale, 2),
             wholesale_pack_size=special.count,
-            savings_per_unit=calc_savings(retail, special.price),
-            discount_percent=calc_discount_percent(retail, special.price),
+            savings_per_unit=calc_savings(retail, wholesale),
+            discount_percent=calc_discount_percent(retail, wholesale),
             in_stock=bool(data.get("available")) and stock > 0,
-            weighted=bool(data.get("weighted")),
+            weighted=weighted,
         )
 
 
