@@ -51,8 +51,11 @@ def filter_new_deals(
     return result
 
 
-async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
-    """Fetch wholesale deals from MCP and post new ones to every active group.
+async def scan_promotions(bot: Bot, settings: Settings, session=None, group_id: int | None = None) -> dict:
+    """Fetch wholesale deals from MCP and post new ones to active groups.
+
+    When group_id is given, posts only to that group (manual /scan in a group).
+    Otherwise posts to every active group (scheduled job).
 
     Returns a stats dict: {"posted": [...], "skipped_dup": n, "below_threshold": n}."""
     stats: dict = {"posted": [], "skipped_dup": 0, "below_threshold": 0}
@@ -70,12 +73,23 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None) -> dict:
     if session is None:
         session = get_sessionmaker()()
     try:
-        groups = (
-            await session.execute(select(Group).where(Group.is_active.is_(True)))
-        ).scalars().all()
-        if not groups:
-            logger.warning("no active groups to post to")
-            return stats
+        if group_id is not None:
+            group = (
+                await session.execute(
+                    select(Group).where(Group.id == group_id, Group.is_active.is_(True))
+                )
+            ).scalar_one_or_none()
+            groups = [group] if group is not None else []
+            if not groups:
+                logger.warning("no active group %s to post to", group_id)
+                return stats
+        else:
+            groups = (
+                await session.execute(select(Group).where(Group.is_active.is_(True)))
+            ).scalars().all()
+            if not groups:
+                logger.warning("no active groups to post to")
+                return stats
 
         for group in groups:
             existing_ids = set(

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command, CommandStart
@@ -10,19 +10,22 @@ from aiogram.types import CallbackQuery, ChatMemberUpdated, LinkPreviewOptions, 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
-from bot.commands import WELCOME_TEXT, set_chat_menu, set_default_menu
+from bot.commands import WELCOME_TEXT, set_chat_menu, set_default_menu, set_manager_menu
 from bot.keyboards import (
     DEAL_INFO,
     HOUSE_CHECKOUT,
+    HOUSE_STATUS,
     HOUSE_THINKING,
     deal_keyboard,
     deal_step,
+    manager_status_keyboard,
     order_keyboard,
     parse_deal_dec,
     parse_deal_inc,
     parse_deal_join,
+    parse_manager_status,
 )
-from bot.texts import fmt_qty, format_deal_record, pack_unit
+from bot.texts import fmt_qty, format_deal_record, order_status_text, pack_unit
 from core.config import Settings, get_settings
 from core.orders import (
     OPEN_STATUSES,
@@ -30,7 +33,6 @@ from core.orders import (
     build_order_summary,
     confirm_draft,
     deal_pending,
-    deal_total,
     send_house_order_to_manager,
     update_draft,
 )
@@ -233,6 +235,14 @@ async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
         return False
 
 
+def _strip_status_footer(text: str) -> str:
+    """Прибирає рядок «📌 Статус: ...» і порожні рядки в кінці тексту."""
+    lines = text.split("\n")
+    while lines and (not lines[-1].strip() or lines[-1].startswith("📌 Статус:")):
+        lines.pop()
+    return "\n".join(lines)
+
+
 async def main() -> None:
     settings: Settings = get_settings()
     init_engine(settings.database_url)
@@ -346,9 +356,24 @@ async def main() -> None:
 
     @dp.message(Command("scan"))
     async def cmd_scan(message: Message) -> None:
+        group_id = None
+        if message.chat.type in ("group", "supergroup"):
+            session = get_sessionmaker()()
+            try:
+                group = (
+                    await session.execute(
+                        select(Group).where(Group.telegram_chat_id == message.chat.id)
+                    )
+                ).scalar_one_or_none()
+            finally:
+                await session.close()
+            if group is None:
+                await message.answer("Групу не зареєстровано. Скан у цій групі неможливий.")
+                return
+            group_id = group.id
         await message.answer("Сканую оптові акції...")
         try:
-            stats = await scan_promotions(bot, settings)
+            stats = await scan_promotions(bot, settings, group_id=group_id)
             await message.answer(f"Скан завершено. Нових постів: {len(stats.get('posted', []))}")
         except Exception as exc:
             logger.exception("scan failed")
@@ -382,6 +407,25 @@ async def main() -> None:
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
 
+    @dp.message(Command("status"))
+    async def cmd_status(message: Message) -> None:
+        if message.chat.type not in ("group", "supergroup"):
+            await message.answer("Ця команда працює тільки в групах.")
+            return
+        session = get_sessionmaker()()
+        try:
+            group = (
+                await session.execute(
+                    select(Group).where(Group.telegram_chat_id == message.chat.id)
+                )
+            ).scalar_one_or_none()
+            if group is None:
+                await message.answer("Групу не зареєстровано.")
+                return
+            label = order_status_text(group.order_status)
+            await message.answer(f"📊 <b>Статус замовлення будинку:</b> {label}")
+        finally:
+            await session.close()
     @dp.message(Command("reset"))
     async def cmd_reset(message: Message) -> None:
         if message.chat.type not in ("group", "supergroup"):
@@ -410,12 +454,50 @@ async def main() -> None:
                 "🔄 Починаю сброс списку замовлення...\n"
                 "Оновлюю пости угод (може зайняти ~1 хвилину)."
             )
-            await _reset_order(session, group)
-            await message.answer(
-                "✅ Список замовлення скинуто. Усі можуть зробити замовлення заново."
-            )
+            report = await _reset_order(session, group)
+            parts = [
+                "✅ <b>Список замовлення скинуто.</b>",
+                f"📄 Угод повернуто до збору: <b>{report['deals']}</b>",
+                f"📝 Постів оновлено: <b>{report['posts_ok']}</b>",
+            ]
+            if report["posts_failed"]:
+                parts.append(f"⚠️ Не оновлено (помилки): <b>{report['posts_failed']}</b>")
+            parts.append("Усі можуть зробити замовлення заново.")
+            await message.answer("\n".join(parts))
         finally:
             await session.close()
+
+    @dp.message(F.chat.type == "private")
+    async def on_private_forward(message: Message) -> None:
+        """Видалення старих повідомлень: перешли його боту, і він видалить оригінал."""
+        origin = message.forward_origin
+        if origin is None:
+            return
+        msg_id = getattr(origin, "message_id", None)
+        if msg_id is None:
+            await message.answer("Не можу визначити, яке повідомлення видалити.")
+            return
+        origin_chat = getattr(origin, "chat", None)
+        if origin_chat is None:
+            await message.answer("Не можу видалити це повідомлення (не з чату).")
+            return
+        chat_id = origin_chat.id
+        try:
+            if chat_id == settings.manager_chat_id and settings.manager_bot_token:
+                del_bot = Bot(token=settings.manager_bot_token)
+                try:
+                    await del_bot.delete_message(chat_id, msg_id)
+                finally:
+                    await del_bot.session.close()
+            else:
+                await bot.delete_message(chat_id, msg_id)
+            await message.answer("✅ Старе повідомлення видалено.")
+        except Exception:
+            logger.exception("failed to delete forwarded message")
+            await message.answer(
+                "❌ Не вдалось видалити. Бот має бути адміністратором "
+                "в групі (для повідомлень ботів — це правило теж діє)."
+            )
 
     @dp.message()
     async def on_group_message(message: Message) -> None:
@@ -462,13 +544,13 @@ async def main() -> None:
                     settings, session, group, delivery_info=group.delivery_info
                 )
                 if sent:
-                    await _mark_deals_sent(session, group)
                     await message.answer(
                         "✅ <b>Замовлення передано менеджеру!</b>\n\n"
                         "📦 Сподіваємось, все буде смачно! 😋\n"
                         "⏳ Менеджер скоро зв'яжеться з вами для підтвердження.\n\n"
                         "💙💛 Дякуємо за замовлення та чудову спільну закупівлю!"
                     )
+                    await _reset_order(session, group)
                 else:
                     group.checkout_pending = True
                     await session.commit()
@@ -482,42 +564,27 @@ async def main() -> None:
         finally:
             await session.close()
 
-    async def _mark_deals_sent(session, group: Group) -> None:
-        deals = (
-            (
-                await session.execute(
-                    select(Deal).where(
-                        Deal.group_id == group.id,
-                        Deal.status.in_(OPEN_STATUSES),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for deal in deals:
-            deal.status = DealStatus.sent_to_manager
-            if deal.telegram_message_id:
-                collected = await deal_total(session, deal.id)
-                text = format_deal_record(
-                    deal, collected=collected, tone_profile=group.tone_profile
-                )
-                text += "\n\n✅ Передано менеджеру"
-                await edit_deal_post(bot, group.telegram_chat_id, deal, text)
-        await session.commit()
-
-    async def _reset_order(session, group: Group) -> None:
+    async def _reset_order(session, group: Group) -> dict:
         """Скидання замовлення будинку (тільки адмін): очищає учасників,
-        повертає угоди в збір і прибирає кнопки «передано»."""
+        повертає угоди в збір і прибирає кнопки «передано».
+        Повертає звіт: {'deals': int, 'posts_ok': int, 'posts_failed': int}."""
         deals = await reset_house_order(session, group)
+        posts_ok = 0
+        posts_failed = 0
         for deal in deals:
             if deal.telegram_message_id:
                 text = format_deal_record(
                     deal, collected=0, tone_profile=group.tone_profile
                 )
                 keyboard = deal_keyboard(deal.id, deal.wholesale_pack_size, deal.weighted)
-                await edit_deal_post(bot, group.telegram_chat_id, deal, text, keyboard)
+                try:
+                    await edit_deal_post(bot, group.telegram_chat_id, deal, text, keyboard)
+                    posts_ok += 1
+                except Exception:
+                    logger.exception("reset: failed to edit post for deal %s", deal.id)
+                    posts_failed += 1
                 await asyncio.sleep(0.4)
+        return {"deals": len(deals), "posts_ok": posts_ok, "posts_failed": posts_failed}
 
     async def _handle_house_order(callback: CallbackQuery) -> None:
         chat = callback.message.chat
@@ -543,6 +610,15 @@ async def main() -> None:
                 await callback.answer("Ок, чекаємо 😉")
                 return
 
+            if data == HOUSE_STATUS:
+                label = order_status_text(group.order_status)
+                await callback.answer()
+                await bot.send_message(
+                    chat.id,
+                    f"📊 <b>Статус замовлення будинку:</b> {label}",
+                )
+                return
+
             if not await _is_admin(bot, chat.id, callback.from_user.id):
                 await callback.answer("Оформити замовлення може лише адміністратор")
                 return
@@ -566,7 +642,7 @@ async def main() -> None:
             await callback.answer("Партія — мінімальна кількість для оптової ціни")
             return
 
-        if data in (HOUSE_THINKING, HOUSE_CHECKOUT):
+        if data in (HOUSE_THINKING, HOUSE_CHECKOUT, HOUSE_STATUS):
             await _handle_house_order(callback)
             return
 
@@ -642,15 +718,114 @@ async def main() -> None:
     schedule_jobs(scheduler, bot, settings)
     scheduler.start()
 
+    manager_bot: Bot | None = None
+    manager_dp: Dispatcher | None = None
+    if settings.manager_bot_token:
+        manager_bot = Bot(
+            token=settings.manager_bot_token,
+            default=DefaultBotProperties(parse_mode="HTML"),
+        )
+        manager_dp = Dispatcher()
+        try:
+            await set_manager_menu(manager_bot)
+        except Exception:
+            logger.warning("could not set manager bot menu")
+
+        @manager_dp.callback_query(F.data.startswith("mgr:status:"))
+        async def on_manager_status(callback: CallbackQuery) -> None:
+            parsed = parse_manager_status(callback.data or "")
+            if parsed is None:
+                await callback.answer()
+                return
+            status, group_id = parsed
+            session = get_sessionmaker()()
+            try:
+                group = (
+                    await session.execute(
+                        select(Group).where(Group.id == group_id)
+                    )
+                ).scalar_one_or_none()
+                if group is None:
+                    await callback.answer("Групу не знайдено")
+                    return
+                if group.manager_message_id != callback.message.message_id:
+                    await callback.answer("Це замовлення вже не актуальне")
+                    return
+                group.order_status = status
+                await session.commit()
+
+                label = order_status_text(status)
+                base_text = _strip_status_footer(callback.message.text or "")
+                new_text = f"{base_text}\n\n📌 Статус: <b>{label}</b>"
+                try:
+                    if status in ("done", "cancelled"):
+                        await callback.message.edit_text(
+                            new_text,
+                            reply_markup=None,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        )
+                    else:
+                        await callback.message.edit_text(
+                            new_text,
+                            reply_markup=manager_status_keyboard(group_id),
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        )
+                except TelegramBadRequest:
+                    logger.warning(
+                        "failed to edit manager order message %s",
+                        callback.message.message_id,
+                    )
+
+                try:
+                    await bot.send_message(
+                        group.telegram_chat_id,
+                        f"📊 <b>Статус замовлення будинку:</b> {label}",
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to notify group %s about order status",
+                        group.telegram_chat_id,
+                    )
+                await callback.answer(f"Статус: {label}")
+            finally:
+                await session.close()
+
+        @manager_dp.message(Command("status"))
+        async def manager_cmd_status(message: Message) -> None:
+            session = get_sessionmaker()()
+            try:
+                groups = (
+                    await session.execute(
+                        select(Group).where(Group.is_active.is_(True)).order_by(Group.id)
+                    )
+                ).scalars().all()
+                lines = ["📊 <b>Статуси замовлень:</b>"]
+                if not groups:
+                    lines.append("Немає активних груп.")
+                for g in groups:
+                    name = g.house_name or f"Група {g.telegram_chat_id}"
+                    lines.append(f"• {name}: <b>{order_status_text(g.order_status)}</b>")
+                await message.answer("\n".join(lines))
+            finally:
+                await session.close()
+
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await set_default_menu(bot)
         await _refresh_group_menus(bot)
         logger.info("Polling started")
-        await dp.start_polling(bot)
+        if manager_bot is not None and manager_dp is not None:
+            await asyncio.gather(
+                dp.start_polling(bot),
+                manager_dp.start_polling(manager_bot),
+            )
+        else:
+            await dp.start_polling(bot)
     finally:
         scheduler.shutdown(wait=False)
         await bot.session.close()
+        if manager_bot is not None:
+            await manager_bot.session.close()
         await dispose_engine()
 
 

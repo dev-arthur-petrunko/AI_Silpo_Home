@@ -6,10 +6,12 @@ DEAL_DEC_PREFIX = "deal:dec:"
 DEAL_INFO = "deal:info"
 HOUSE_THINKING = "house:thinking"
 HOUSE_CHECKOUT = "house:checkout"
+HOUSE_STATUS = "house:status"
+MGR_STATUS_PREFIX = "mgr:status:"
 
 
 def order_keyboard() -> InlineKeyboardMarkup:
-    """Кнопки після /order: ще думаємо / оформити для менеджера."""
+    """Кнопки після /order: ще думаємо / оформити для менеджера / статус."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -22,8 +24,60 @@ def order_keyboard() -> InlineKeyboardMarkup:
                     callback_data=HOUSE_CHECKOUT,
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Статус замовлення",
+                    callback_data=HOUSE_STATUS,
+                ),
+            ],
         ]
     )
+
+
+def manager_status_keyboard(group_id: int) -> InlineKeyboardMarkup:
+    """Кнопки зміни статусу замовлення (на повідомленні менеджера)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Підтверджено",
+                    callback_data=f"{MGR_STATUS_PREFIX}confirmed:{group_id}",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Скасовано",
+                    callback_data=f"{MGR_STATUS_PREFIX}cancelled:{group_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📦 Комплектується",
+                    callback_data=f"{MGR_STATUS_PREFIX}packing:{group_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🚚 В дорозі",
+                    callback_data=f"{MGR_STATUS_PREFIX}delivering:{group_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎉 Виконано",
+                    callback_data=f"{MGR_STATUS_PREFIX}done:{group_id}",
+                ),
+            ],
+        ]
+    )
+
+
+def parse_manager_status(data: str) -> tuple[str, int] | None:
+    """Повертає (status, group_id) з 'mgr:status:<status>:<group_id>' або None."""
+    if not data.startswith(MGR_STATUS_PREFIX):
+        return None
+    rest = data[len(MGR_STATUS_PREFIX):]
+    try:
+        status, group_id = rest.rsplit(":", 1)
+        return status, int(group_id)
+    except ValueError:
+        return None
 
 
 def deal_step(weighted: bool) -> float:

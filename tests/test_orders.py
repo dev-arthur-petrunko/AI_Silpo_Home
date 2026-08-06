@@ -3,7 +3,6 @@ from bot.texts import (
     fmt_qty,
     format_deal_record,
     format_deal_text,
-    format_manager_deal_summary,
     format_order_text,
     pack_unit,
     product_url,
@@ -91,18 +90,6 @@ def test_format_deal_text_with_link():
     )
     text = format_deal_text(product)
     assert '<a href="https://silpo.ua/product/burrata">' in text
-
-
-def test_format_manager_deal_summary_with_link():
-    text = format_manager_deal_summary(
-        7, "Сир Буррата", "кг", ["• User: 1 кг"], 1, 65.9, 883.1,
-        product_url="https://silpo.ua/product/burrata",
-    )
-    assert '<a href="https://silpo.ua/product/burrata">' in text
-    text_no_link = format_manager_deal_summary(
-        7, "Сир Буррата", "кг", ["• User: 1 кг"], 1, 65.9, 883.1
-    )
-    assert "silpo.ua" not in text_no_link
 
 
 def test_format_order_text():

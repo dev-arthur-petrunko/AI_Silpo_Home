@@ -4,6 +4,7 @@ from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefaul
 
 STANDARD_COMMANDS = [
     BotCommand(command="order", description="📦 Мій заказ"),
+    BotCommand(command="status", description="📊 Статус замовлення"),
     BotCommand(command="scan", description="🔍 Сканувати акції"),
     BotCommand(command="reset", description="🔄 Сброс списку замовлення (адмін/власник)"),
     BotCommand(command="debug", description="ℹ️ Статус бота"),
@@ -22,11 +23,21 @@ async def set_chat_menu(bot: Bot, chat_id: int) -> None:
     )
 
 
+async def set_manager_menu(bot: Bot) -> None:
+    await bot.set_my_commands(
+        [
+            BotCommand(command="status", description="📊 Статуси замовлень"),
+        ],
+        scope=BotCommandScopeDefault(),
+    )
+
+
 WELCOME_TEXT = (
     "🤖 <b>Спільні закупівлі «Сільпо»</b>\n"
-    "Тут з'являтимуться товари зі знижкою ≥50% (акція «Гуртом дешевше»).\n\n"
+    "Тут з'являтимуться товари зі знижкою ≥25% (акція «Гуртом дешевше»).\n\n"
     "📦 <b>Меню:</b>\n"
     "• <b>/order</b> — переглянути весь свій заказ\n"
+    "• <b>/status</b> — статус замовлення будинку\n"
     "• <b>/scan</b> — запустити скан угод\n"
     "• <b>/reset</b> — адміністратор або власник скидає список замовлення\n"
     "• <b>/debug</b> — статус бота\n"

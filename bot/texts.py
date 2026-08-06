@@ -6,6 +6,19 @@ from core.tone_profiler import tone_intro, tone_outro
 
 WHOLESALE_PROMO_LABEL = "Гуртом дешевше"
 
+ORDER_STATUS_LABELS: dict[str, str] = {
+    "pending": "⏳ Очікує підтвердження менеджера",
+    "confirmed": "✅ Підтверджено",
+    "packing": "📦 Комплектується",
+    "delivering": "🚚 В дорозі",
+    "done": "🎉 Виконано",
+    "cancelled": "❌ Скасовано",
+}
+
+
+def order_status_text(status: str | None) -> str:
+    return ORDER_STATUS_LABELS.get(status or "", "—")
+
 
 def product_url(slug: str | None) -> str | None:
     if not slug:
@@ -168,32 +181,3 @@ def format_order_text(
     parts.append(f"💰 Разом: <b>{fmt_price(total_cost)}₴</b>")
     parts.append(f"💚 Ти економиш: <b>{fmt_price(total_savings)}₴</b>")
     return "\n".join(parts)
-
-
-def format_manager_deal_summary(
-    deal_id: int,
-    product_name: str,
-    unit: str,
-    lines: list[str],
-    total_qty: float,
-    total_cost: float,
-    total_savings: float,
-    product_url: str | None = None,
-) -> str:
-    """Consolidated order for one closed deal, posted to the manager group."""
-    name_line = (
-        f"<a href=\"{product_url}\"><b>{product_name}</b></a>"
-        if product_url
-        else f"<b>{product_name}</b>"
-    )
-    parts = [
-        f"🛒 <b>ЗАМОВЛЕННЯ #{deal_id}</b>",
-        name_line,
-        "",
-        *lines,
-        "",
-        f"💰 Разом: <b>{fmt_qty(total_qty)} {unit}</b> на суму <b>{fmt_price(total_cost)}₴</b>",
-        f"💚 Економія: <b>{fmt_price(total_savings)}₴</b>",
-    ]
-    return "\n".join(parts)
-    return "📦 Зведене замовлення формується у наступній фазі."

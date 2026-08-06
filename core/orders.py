@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
-from bot.keyboards import deal_step
+from bot.keyboards import deal_step, manager_status_keyboard
 from bot.texts import (
     fmt_price,
     fmt_qty,
-    format_manager_deal_summary,
     format_order_text,
+    order_status_text,
     pack_unit,
     product_url,
 )
 from core.config import Settings
-from db.models import Deal, DealStatus, Group, Participant, TelegramUser
+from db.models import Deal, DealStatus, Group, Participant
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -202,119 +202,6 @@ async def build_order_summary(
     )
 
 
-async def build_deal_order_summary(
-    session: "AsyncSession", deal: Deal
-) -> str | None:
-    """Consolidated order for a single deal (all participants), for the manager."""
-    participants = (
-        (
-            await session.execute(
-                select(Participant)
-                .where(
-                    Participant.deal_id == deal.id,
-                    Participant.confirmed.is_(True),
-                )
-                .order_by(Participant.quantity.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not participants:
-        return None
-
-    unit = pack_unit(deal.weighted)
-    wholesale = float(deal.unit_price_wholesale)
-    retail = float(deal.unit_price_retail)
-    lines: list[str] = []
-    total_qty = 0.0
-    total_cost = 0.0
-    total_savings = 0.0
-    for p in participants:
-        qty = float(p.quantity)
-        subtotal = round(qty * wholesale, 2)
-        savings = round(qty * (retail - wholesale), 2)
-        total_qty += qty
-        total_cost += subtotal
-        total_savings += savings
-        who = p.telegram_username or f"id{p.telegram_user_id}"
-        lines.append(
-            f"• {who}: <b>{fmt_qty(qty)} {unit}</b> × {fmt_price(wholesale)}₴ "
-            f"= <b>{fmt_price(subtotal)}₴</b>"
-        )
-
-    return format_manager_deal_summary(
-        deal.id,
-        deal.product_name,
-        unit,
-        lines,
-        round(total_qty, 3),
-        round(total_cost, 2),
-        round(total_savings, 2),
-        product_url=product_url(deal.product_slug),
-    )
-
-
-async def get_user_contacts(
-    session: "AsyncSession", user_id: int
-) -> tuple[str, str] | None:
-    """Latest (phone, address) the user provided, if both are present."""
-    user = (
-        await session.execute(
-            select(TelegramUser).where(TelegramUser.telegram_user_id == user_id)
-        )
-    ).scalar_one_or_none()
-    if user is not None and user.phone_number and user.address:
-        return (str(user.phone_number), str(user.address))
-    return None
-
-
-async def save_user_contacts(
-    session: "AsyncSession",
-    user_id: int,
-    phone: str | None = None,
-    address: str | None = None,
-) -> int:
-    """Write phone/address onto the user and all open-deal participants.
-    Returns how many participant rows were touched."""
-    user = (
-        await session.execute(
-            select(TelegramUser).where(TelegramUser.telegram_user_id == user_id)
-        )
-    ).scalar_one_or_none()
-    if user is None:
-        user = TelegramUser(telegram_user_id=user_id)
-        session.add(user)
-    if phone:
-        user.phone_number = phone
-    if address:
-        user.address = address
-    if user.phone_number and user.address:
-        user.contact_pending = False
-
-    parts = (
-        (
-            await session.execute(
-                select(Participant).where(
-                    Participant.telegram_user_id == user_id,
-                    Participant.deal_id.in_(
-                        select(Deal.id).where(Deal.status.in_(OPEN_STATUSES))
-                    ),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for part in parts:
-        if phone:
-            part.phone_number = phone
-        if address:
-            part.address = address
-    await session.commit()
-    return len(parts)
-
-
 async def build_house_order_summary(
     session: "AsyncSession", group: Group, delivery_info: dict | None = None
 ) -> str | None:
@@ -399,16 +286,17 @@ async def build_house_order_summary(
 
 async def send_house_order_to_manager(
     settings: Settings, session: "AsyncSession", group: Group, delivery_info: dict | None = None
-) -> bool:
-    """Надіслати зведення замовлення будинку в групу менеджера (через бота2)."""
+) -> int | None:
+    """Надіслати зведення замовлення будинку в групу менеджера (через бота2).
+    Повертає message_id повідомлення або None."""
     if not settings.manager_chat_id or not settings.manager_bot_token:
         logger.info("manager not configured; skip house order send")
-        return False
+        return None
 
     text = await build_house_order_summary(session, group, delivery_info=delivery_info)
     if not text:
         logger.info("group %s has no open orders; skip manager send", group.id)
-        return False
+        return None
 
     try:
         from aiogram import Bot
@@ -421,65 +309,23 @@ async def send_house_order_to_manager(
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         try:
-            await manager_bot.send_message(
+            message = await manager_bot.send_message(
                 settings.manager_chat_id,
-                text,
+                text + f"\n\n📌 Статус: <b>{order_status_text('pending')}</b>",
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
+                reply_markup=manager_status_keyboard(group.id),
             )
+            group.manager_message_id = message.message_id
+            group.order_status = "pending"
             logger.info(
-                "house order for group %s sent to manager chat %s",
+                "house order for group %s sent to manager chat %s (msg %s)",
                 group.id,
                 settings.manager_chat_id,
+                message.message_id,
             )
-            return True
+            return message.message_id
         finally:
             await manager_bot.session.close()
     except Exception:
         logger.exception("failed to send house order for group %s", group.id)
-        return False
-
-
-async def send_deal_to_manager(
-    settings: Settings, session: "AsyncSession", deal: Deal
-) -> bool:
-    """Post the consolidated order of a closed deal to the manager group
-    (via the manager bot token). Returns True if sent."""
-    if not settings.manager_chat_id or not settings.manager_bot_token:
-        logger.info(
-            "manager_chat_id/manager_bot_token not set; skip manager send for deal %s",
-            deal.id,
-        )
-        return False
-
-    text = await build_deal_order_summary(session, deal)
-    if not text:
-        logger.info("deal %s has no participants; skip manager send", deal.id)
-        return False
-
-    try:
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        from aiogram.types import LinkPreviewOptions
-
-        manager_bot = Bot(
-            token=settings.manager_bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-        try:
-            await manager_bot.send_message(
-                settings.manager_chat_id,
-                text,
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-            )
-            logger.info(
-                "order for deal %s sent to manager chat %s",
-                deal.id,
-                settings.manager_chat_id,
-            )
-            return True
-        finally:
-            await manager_bot.session.close()
-    except Exception:
-        logger.exception("failed to send deal %s to manager", deal.id)
-        return False
+        return None

@@ -331,19 +331,6 @@ async def pick_products_for_group(
     return [p for p in products if p.mcp_id in picked_ids]
 
 
-async def save_group_profile_vector(session: "AsyncSession", group_id: int) -> dict[str, float]:
-    """Перераховує і зберігає профіль групи після закриття угоди."""
-    from db.models import Group
-
-    history = await get_group_deal_history(session, group_id)
-    profile_vector, _category_scores = build_group_profile(history)
-    group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
-    if group is not None:
-        group.profile_vector = profile_vector or None
-        await session.commit()
-    return profile_vector
-
-
 def _demo() -> None:
     """Демо — можна запустити напряму: python core/relevance_scorer.py"""
     history = [

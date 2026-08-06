@@ -145,8 +145,3 @@ def tone_outro(profile: dict | None) -> str | None:
     if not profile:
         return None
     return (profile.get("post_outro") or "").strip() or None
-
-
-async def ensure_group_tone(session: "AsyncSession", settings: Settings, group: Group) -> dict | None:
-    """Викликається з розкладу: рахує профіль, якщо пора, інакше повертає кеш."""
-    return await analyze_group_tone(session, settings, group)
