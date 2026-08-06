@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.types import LinkPreviewOptions
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
 from bot.keyboards import deal_keyboard
@@ -25,6 +28,22 @@ OPEN_STATUSES = (
     DealStatus.sent_to_manager,
     DealStatus.confirmed,
 )
+
+
+def parse_scan_times(value: str) -> list[tuple[int, int]]:
+    """Розбирає '10:00,14:00,16:00' у список (година, хвилина)."""
+    times: list[tuple[int, int]] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            hour, minute = (int(x) for x in part.split(":"))
+        except (ValueError, TypeError):
+            continue
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            times.append((hour, minute))
+    return sorted(set(times))
 
 
 def filter_new_deals(
@@ -92,12 +111,13 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None, group_id: 
                 return stats
 
         for group in groups:
+            cutoff = datetime.now(timezone.utc) - dt.timedelta(days=settings.deal_dup_window_days)
             existing_ids = set(
                 (
                     await session.execute(
                         select(Deal.mcp_product_id).where(
                             Deal.group_id == group.id,
-                            Deal.status.in_(OPEN_STATUSES),
+                            Deal.created_at >= cutoff,
                         )
                     )
                 ).scalars().all()
@@ -183,15 +203,20 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None, group_id: 
 
 
 def schedule_jobs(scheduler: AsyncIOScheduler, bot: Bot, settings: Settings) -> None:
-    scheduler.add_job(
-        scan_promotions,
-        trigger="interval",
-        hours=settings.scan_interval_hours,
-        kwargs={"bot": bot, "settings": settings},
-        id="scan_promotions",
-        max_instances=1,
-        coalesce=True,
-    )
+    for hour, minute in parse_scan_times(settings.scan_times):
+        scheduler.add_job(
+            scan_promotions,
+            trigger=CronTrigger(
+                hour=hour,
+                minute=minute,
+                timezone=ZoneInfo(settings.scan_timezone),
+            ),
+            kwargs={"bot": bot, "settings": settings},
+            id=f"scan_promotions_{hour:02d}{minute:02d}",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
     scheduler.add_job(
         refresh_group_tones,
         trigger="interval",

@@ -20,10 +20,12 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://localhost:5432/silpo_home"
 
-    scan_interval_hours: int = 6
+    scan_times: str = "10:00,14:00,16:00"
+    scan_timezone: str = "Europe/Kyiv"
     min_discount_percent: float = 25.0
     max_posts_per_scan: int = 10
     deal_default_deadline_days: int = 3
+    deal_dup_window_days: int = 7
 
     groq_api_key: str | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions"

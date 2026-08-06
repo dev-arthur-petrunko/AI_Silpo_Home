@@ -224,19 +224,23 @@ def rank_products_for_group(
     daily_limit: int = DAILY_POST_LIMIT,
     explore_slots: int = EXPLORE_SLOTS,
 ) -> list[Candidate]:
-    """Головна функція (чиста). Повертає список товарів для постингу сьогодні цій групі.
+    """Головна функція (чиста). Повертає список товарів для постингу цій групі.
 
     history=None або порожня історія = cold start: просто топ за знижкою.
+
+    Добірка не дає одній категорії зайняти весь батч (жодна категорія не
+    отримує більше половини публікацій), а вільні місця дозаповнюються
+    категоріями, які група раніше ігнорувала (explore).
     """
     if not products:
         return []
 
     profile_vector, category_scores = build_group_profile(history or [])
 
-    # --- COLD START: історії немає взагалі -> просто топ за знижкою ---
+    # --- COLD START: історії немає взагалі -> топ за знижкою (з розподілом по категоріях) ---
     if not profile_vector and not category_scores:
         ranked = sorted(products, key=lambda p: p.discount_percent, reverse=True)
-        return ranked[:daily_limit]
+        return _diversify([(p, float(p.discount_percent)) for p in ranked], daily_limit)
 
     # --- Рахуємо релевантність для кожного товару ---
     names = [p.name for p in products]
@@ -251,40 +255,64 @@ def rank_products_for_group(
 
     scored.sort(key=lambda pair: pair[1], reverse=True)
 
-    exploit_count = daily_limit - explore_slots
-    exploit_picks = [p for p, _ in scored[:exploit_count]]
-    exploit_ids = {p.id for p in exploit_picks}
+    picks = _diversify(scored, daily_limit)
+    return _add_explore(picks, scored, category_scores, explore_slots, daily_limit)
 
-    # --- EXPLORE: категорії з найнижчим/від'ємним рахунком, яких ще немає в exploit ---
-    all_categories = set(CATEGORY_KEYWORDS.keys())
-    # категорії, відсутні в history, теж вважаються "непопулярними" (score=0, ще не пробували)
-    for cat in all_categories:
-        category_scores.setdefault(cat, 0)
 
-    underexplored_categories = sorted(category_scores.items(), key=lambda kv: kv[1])
-
-    explore_picks: list[Candidate] = []
-    for category, _score in underexplored_categories:
-        if len(explore_picks) >= explore_slots:
+def _diversify(scored: list[tuple[Candidate, float]], daily_limit: int) -> list[Candidate]:
+    """Обирає топ за рахунком, але не дає одній категорії зайняти весь батч:
+    якщо категорій більше однієї — максимум половина батчу на категорію."""
+    if not scored or daily_limit <= 0:
+        return []
+    categories = {product.category for product, _ in scored}
+    cap = daily_limit
+    if len(categories) > 1:
+        cap = max(1, math.ceil(daily_limit / 2))
+    counts: dict[str, int] = {}
+    picks: list[Candidate] = []
+    for product, _score in scored:
+        if len(picks) >= daily_limit:
             break
+        if counts.get(product.category, 0) >= cap:
+            continue
+        counts[product.category] = counts.get(product.category, 0) + 1
+        picks.append(product)
+    return picks
+
+
+def _add_explore(
+    picks: list[Candidate],
+    scored: list[tuple[Candidate, float]],
+    category_scores: dict[str, int],
+    explore_slots: int,
+    daily_limit: int,
+) -> list[Candidate]:
+    """Дозаповнює вільні місця категоріями, які група найчастіше ігнорувала."""
+    if explore_slots <= 0 or len(picks) >= daily_limit:
+        return picks
+    for cat in set(CATEGORY_KEYWORDS.keys()):
+        category_scores.setdefault(cat, 0)
+    picked_cats = {p.category for p in picks}
+    picked_ids = {p.id for p in picks}
+    slots_left = daily_limit - len(picks)
+    for category, _score in sorted(category_scores.items(), key=lambda kv: kv[1]):
+        if slots_left <= 0 or explore_slots <= 0:
+            break
+        if category in picked_cats:
+            continue
         candidates = [
             p for p, _ in scored
-            if p.category == category and p.id not in exploit_ids
+            if p.category == category and p.id not in picked_ids
         ]
-        if candidates:
-            # серед кандидатів цієї категорії — беремо найвигідніший за знижкою
-            best = max(candidates, key=lambda p: p.discount_percent)
-            explore_picks.append(best)
-
-    result = exploit_picks + explore_picks
-    # дедублікація на випадок збігу id (теоретично можливо, якщо explore_slots=0)
-    seen: set[str] = set()
-    final: list[Candidate] = []
-    for p in result:
-        if p.id not in seen:
-            final.append(p)
-            seen.add(p.id)
-    return final[:daily_limit]
+        if not candidates:
+            continue
+        best = max(candidates, key=lambda p: p.discount_percent)
+        picks.append(best)
+        picked_ids.add(best.id)
+        picked_cats.add(category)
+        slots_left -= 1
+        explore_slots -= 1
+    return picks
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 from core.mcp_client import Product
-from core.promo_scanner import filter_new_deals
+from core.promo_scanner import filter_new_deals, parse_scan_times
 
 
 def _product(mcp_id: str, retail: float, wholesale: float, pack: int, in_stock: bool = True) -> Product:
@@ -60,6 +60,13 @@ def test_filter_caps_at_limit():
     ]
     result = filter_new_deals(products, set(), min_discount_percent=15, limit=2)
     assert [p.mcp_id for p in result] == ["c", "b"]
+
+
+def test_parse_scan_times():
+    assert parse_scan_times("10:00,14:00,16:00") == [(10, 0), (14, 0), (16, 0)]
+    assert parse_scan_times(" 08:30 , 8:30 ") == [(8, 30)]
+    assert parse_scan_times("25:00,bad,18:45") == [(18, 45)]
+    assert parse_scan_times("") == []
 
 
 def test_product_from_mcp_quantity_logic():

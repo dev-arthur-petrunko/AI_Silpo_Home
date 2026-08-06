@@ -76,6 +76,20 @@ def test_rank_respects_daily_limit():
     assert len(picks) == 3
 
 
+def test_rank_does_not_flood_one_category():
+    products = [
+        Candidate(f"pad{i}", f"Прокладки нічні {i}", discount_percent=60 + i) for i in range(8)
+    ]
+    products.append(Candidate("milk", "Молоко Молокія 2.5%", discount_percent=40))
+    products.append(Candidate("meat", "Курка охолоджена філе", discount_percent=30))
+    picks = rank_products_for_group(products, history=[], daily_limit=10, explore_slots=0)
+    cats = [p.category for p in picks]
+    assert cats.count("інше") <= 5
+    assert "молочка" in cats
+    assert "м'ясо" in cats
+    assert len(picks) <= 10
+
+
 def test_rank_explore_reserves_slot_for_ignored_category():
     products = [
         Candidate("c1", "Курка охолоджена філе", discount_percent=10),

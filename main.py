@@ -350,8 +350,8 @@ async def main() -> None:
     @dp.message(Command("debug"))
     async def cmd_debug(message: Message) -> None:
         await message.answer(
-            f"Бот живий.\nЧат: {message.chat.id}\nСканер: {settings.scan_interval_hours} год\n"
-            f"Мін. знижка: {settings.min_discount_percent}%"
+            f"Бот живий.\nЧат: {message.chat.id}\nСкан: {settings.scan_times} "
+            f"({settings.scan_timezone})\nМін. знижка: {settings.min_discount_percent}%"
         )
 
     @dp.message(Command("scan"))
