@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,9 @@ from core.config import Settings
 from core.savings import best_special_price, calc_discount_percent, calc_savings
 
 logger = logging.getLogger(__name__)
+
+_CTX_TTL_SECONDS = 600.0
+_CTX_CACHE: dict[str, tuple[float, DeliveryContext]] = {}
 
 RETRYABLE = (
     httpx.HTTPStatusError,
@@ -196,6 +200,14 @@ class SilpoMCPClient:
             return {"_text": text}
 
     async def resolve_delivery_context(self, address: str) -> DeliveryContext:
+        cached = _CTX_CACHE.get(address)
+        if cached is not None and time.monotonic() - cached[0] < _CTX_TTL_SECONDS:
+            return cached[1]
+        ctx = await self._resolve_delivery_context_uncached(address)
+        _CTX_CACHE[address] = (time.monotonic(), ctx)
+        return ctx
+
+    async def _resolve_delivery_context_uncached(self, address: str) -> DeliveryContext:
         addr = await self.call_tool("silpo_find_address", {"address": address})
         addresses = addr.get("addresses", [])
         if not addresses:

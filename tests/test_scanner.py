@@ -3,7 +3,6 @@ from core.mcp_client import Product
 from core.promo_scanner import filter_new_deals, group_delivery_address, parse_scan_times
 from db.models import Group
 
-
 def _product(mcp_id: str, retail: float, wholesale: float, pack: int, in_stock: bool = True) -> Product:
     return Product(
         mcp_id=mcp_id,
@@ -141,3 +140,74 @@ def test_product_from_mcp_weighted_keeps_fractional_pack():
     assert product.unit_price_retail == 949.0
     assert product.unit_price_wholesale == 659.0
     assert product.discount_percent == round((949 - 659) / 949 * 100, 2)
+
+
+def test_scan_skips_failed_city_but_posts_others():
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    import core.promo_scanner as ps
+    from core.promo_scanner import scan_promotions
+    from db.base import Base
+    from db.models import Group as GroupModel
+
+    class FakeMessage:
+        def __init__(self, message_id: int) -> None:
+            self.message_id = message_id
+
+    class FakeBot:
+        async def send_photo(self, chat_id, photo, caption=None, reply_markup=None):
+            return FakeMessage(1000 + chat_id)
+
+        async def send_message(self, chat_id, text, reply_markup=None, link_preview_options=None):
+            return FakeMessage(2000 + chat_id)
+
+    class FakeMCP:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def resolve_delivery_context(self, address):
+            if address == "Погане місто":
+                raise RuntimeError("no available time slots")
+            return "ctx-" + address
+
+        async def get_wholesale_products(self, ctx):
+            return [_product("c1", 100, 40, 5)]  # 60% discount
+
+    async def scenario():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with factory() as session:
+            session.add(GroupModel(telegram_chat_id=-111, house_name="А", delivery_address="Погане місто"))
+            session.add(GroupModel(telegram_chat_id=-222, house_name="Б", delivery_address="Харків"))
+            await session.commit()
+
+        settings = Settings(telegram_bot_token="x")
+        original = ps.SilpoMCPClient
+        ps.SilpoMCPClient = FakeMCP
+        try:
+            async with factory() as session:
+                stats = await scan_promotions(FakeBot(), settings, session=session)
+        finally:
+            ps.SilpoMCPClient = original
+        await engine.dispose()
+        return stats
+
+    loop = asyncio.new_event_loop()
+    try:
+        stats = loop.run_until_complete(scenario())
+    finally:
+        loop.close()
+
+    assert len(stats["posted"]) == 1
+    assert stats["posted"][0].startswith("-222:")

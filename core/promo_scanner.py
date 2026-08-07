@@ -122,12 +122,19 @@ async def scan_promotions(bot: Bot, settings: Settings, session=None, group_id: 
         async with SilpoMCPClient(settings) as mcp:
             for address, address_groups in by_address.items():
                 if address not in products_cache:
-                    ctx = await mcp.resolve_delivery_context(address)
+                    try:
+                        ctx = await mcp.resolve_delivery_context(address)
+                        products = await mcp.get_wholesale_products(ctx)
+                    except Exception:
+                        logger.exception(
+                            "scan failed for city '%s'; skipping its groups", address
+                        )
+                        continue
                     ctx_cache[address] = ctx
-                    products_cache[address] = await mcp.get_wholesale_products(ctx)
+                    products_cache[address] = products
                     logger.info(
                         "fetched %d wholesale products for '%s'",
-                        len(products_cache[address]),
+                        len(products),
                         address,
                     )
                 products = products_cache[address]
