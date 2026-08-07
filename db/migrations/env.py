@@ -16,7 +16,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Load database URL from env/.env via pydantic-settings.
+# Завантажуємо URL бази даних з env/.env через pydantic-settings.
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 target_metadata = Base.metadata

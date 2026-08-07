@@ -1,4 +1,4 @@
-"""weighted deals and fractional quantities
+"""вагові угоди та дробові кількості
 
 Revision ID: 3e9f7c2a1b8d
 Revises: 0cfc0ab385c1
@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
+# ідентифікатори ревізії, використовуються Alembic.
 revision: str = '3e9f7c2a1b8d'
 down_revision: Union[str, Sequence[str], None] = '0cfc0ab385c1'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -18,9 +18,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
-    # Weighted products (per kg) carry a fractional minimum order,
-    # e.g. wholesale_pack_size = 0.5 (kg) instead of 3 (pcs).
+    """Оновлення схеми."""
+    # Вагові товари (за кг) мають дробовий мінімальний обсяг замовлення,
+    # напр. wholesale_pack_size = 0.5 (кг) замість 3 (шт).
     with op.batch_alter_table('deals') as batch_op:
         batch_op.alter_column(
             'wholesale_pack_size',
@@ -42,7 +42,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Відкат схеми."""
     with op.batch_alter_table('participants') as batch_op:
         batch_op.alter_column(
             'quantity',

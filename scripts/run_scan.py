@@ -1,10 +1,10 @@
-"""Run one scan of wholesale deals.
+"""Один запуск скану оптових акцій.
 
-Usage:
-    python scripts/run_scan.py --dry-run      # fetch + print deals (no DB, no Telegram)
-    python scripts/run_scan.py --post         # real run: post to active groups (bot + DB)
+Використання:
+    python scripts/run_scan.py --dry-run      # отримати і вивести угоди (без БД і Telegram)
+    python scripts/run_scan.py --post         # реальний запуск: постинг в активні групи (бот + БД)
 
-Examples:
+Приклади:
     python scripts/run_scan.py --dry-run --min 25 --limit 20
 """
 import argparse

@@ -1,4 +1,4 @@
-"""personalization and messages
+"""персоналізація та повідомлення
 
 Revision ID: a4c8e1f9b2d7
 Revises: 3e9f7c2a1b8d
@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
+# ідентифікатори ревізії, використовуються Alembic.
 revision: str = 'a4c8e1f9b2d7'
 down_revision: Union[str, Sequence[str], None] = '3e9f7c2a1b8d'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
+    """Оновлення схеми."""
     op.create_table(
         'messages',
         sa.Column('id', sa.Integer(), primary_key=True),
@@ -62,7 +62,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Відкат схеми."""
     with op.batch_alter_table('groups') as batch_op:
         batch_op.drop_column('tone_profile')
         batch_op.drop_column('profile_vector')

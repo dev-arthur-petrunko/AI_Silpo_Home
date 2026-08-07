@@ -1,4 +1,4 @@
-"""user contact fields (phone, address, contact_pending)
+"""поля контактів користувача (phone, address, contact_pending)
 
 Revision ID: b5d3a8c1e2f4
 Revises: a4c8e1f9b2d7
@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
+# ідентифікатори ревізії, використовуються Alembic.
 revision: str = 'b5d3a8c1e2f4'
 down_revision: Union[str, Sequence[str], None] = 'a4c8e1f9b2d7'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
+    """Оновлення схеми."""
     with op.batch_alter_table('users') as batch_op:
         batch_op.add_column(sa.Column('phone_number', sa.String(length=32), nullable=True))
         batch_op.add_column(sa.Column('address', sa.Text(), nullable=True))
@@ -28,7 +28,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Відкат схеми."""
     with op.batch_alter_table('users') as batch_op:
         batch_op.drop_column('contact_pending')
         batch_op.drop_column('address')

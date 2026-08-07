@@ -1,4 +1,4 @@
-"""Print compact JSON schemas for selected tools from docs/mcp-notes.md."""
+"""Друкує компактні JSON-схеми обраних інструментів із docs/mcp-notes.md."""
 import json
 import sys
 

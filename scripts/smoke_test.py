@@ -1,8 +1,8 @@
-"""Phase 1 smoke test: config, models, DB CRUD round-trip, scheduler wiring.
+"""Димовий тест фази 1: конфіг, моделі, CRUD у БД, підключення розкладу.
 
-Usage:
+Використання:
     python scripts/smoke_test.py
-Uses a temporary SQLite DB (does not touch real DB or Telegram).
+Використовує тимчасову SQLite-БД (не чіпає реальну БД чи Telegram).
 """
 import asyncio
 import os
@@ -45,7 +45,7 @@ async def main() -> None:
 
     sm = get_sessionmaker()
 
-    # Session 1: happy-path insert
+    # Сесія 1: happy-path вставка
     async with sm() as session:
         group = Group(telegram_chat_id=CHAT_ID, house_name="Шевченка 12")
         session.add(group)
@@ -72,7 +72,7 @@ async def main() -> None:
         await session.commit()
         print("[ok] group + deal + 2 participants persisted")
 
-    # Session 2: duplicate (deal_id, telegram_user_id) must be rejected
+    # Сесія 2: дублікат (deal_id, telegram_user_id) має відхилятись
     async with sm() as session:
         deal_id = (
             await session.execute(select(Deal.id).where(Deal.mcp_product_id == "1ed09877-test"))
@@ -80,12 +80,12 @@ async def main() -> None:
         session.add(Participant(deal_id=deal_id, telegram_user_id=111, quantity=5))
         try:
             await session.commit()
-            raise AssertionError("unique(deal_id, user_id) not enforced")
+            raise AssertionError("unique(deal_id, user_id) не застосовано")
         except Exception:
             await session.rollback()
         print("[ok] unique(deal_id, telegram_user_id) enforced")
 
-    # Session 3: verify data from fresh session
+    # Сесія 3: перевірка даних зі свіжої сесії
     async with sm() as session:
         group_db = (
             await session.execute(select(Group).where(Group.telegram_chat_id == CHAT_ID))
@@ -98,7 +98,7 @@ async def main() -> None:
         assert sorted(p.telegram_user_id for p in parts) == [111, 222]
         print(f"[ok] verified: deal {deals[0].id}, participants={len(parts)}, pack_size={deals[0].wholesale_pack_size}")
 
-    # scheduler wiring
+    # Підключення розкладу
     bot = Bot(token=settings.telegram_bot_token)
     scheduler = AsyncIOScheduler(timezone="UTC")
     schedule_jobs(scheduler, bot, settings)

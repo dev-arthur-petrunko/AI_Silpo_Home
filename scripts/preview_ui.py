@@ -1,10 +1,10 @@
-"""Preview of the Phase-4 quantity-selection UI.
+"""Прев'ю UI вибору кількості (фаза 4).
 
-Sends a labelled demo to the first active group:
-  1) weighted deal (kg buttons) with a progress counter,
-  2) piece deal (pcs buttons) with a progress counter.
+Надсилає розмічене демо в першу активну групу:
+  1) вагова угода (кнопки кг) з лічильником прогресу,
+  2) штучна угода (кнопки шт) з лічильником прогресу.
 
-Buttons are inert (callback handling not implemented yet).
+Кнопки неактивні (обробка callback ще не реалізована).
 """
 import asyncio
 import os

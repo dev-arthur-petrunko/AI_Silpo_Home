@@ -1,4 +1,4 @@
-"""per-group delivery address (city/municipality) for city-specific scans
+"""адреса доставки кожної групи (місто) для сканування по містах
 
 Revision ID: d6b7c8e9f0a1
 Revises: c1e4f2a3b5d6
@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
+# ідентифікатори ревізії, використовуються Alembic.
 revision: str = 'd6b7c8e9f0a1'
 down_revision: Union[str, Sequence[str], None] = 'd2a5e3f4b6c7'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -18,12 +18,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
+    """Оновлення схеми."""
     with op.batch_alter_table('groups') as batch_op:
         batch_op.add_column(sa.Column('delivery_address', sa.String(255), nullable=True))
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Відкат схеми."""
     with op.batch_alter_table('groups') as batch_op:
         batch_op.drop_column('delivery_address')

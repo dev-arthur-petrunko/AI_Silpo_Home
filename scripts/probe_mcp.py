@@ -1,9 +1,9 @@
-﻿"""One-off probe of the Silpo MCP server (Phase 0 reconnaissance).
+﻿"""Одноразовий зонд MCP-сервера Сільпо (розвідка фази 0).
 
-Usage:
+Використання:
     python scripts/probe_mcp.py
-Reads MCP_SERVER_URL and MCP_API_KEY from .env (via pydantic-settings default config
-or environment). Prints raw JSON-RPC responses to stdout and appends them to
+Читає MCP_SERVER_URL і MCP_API_KEY із .env (через pydantic-settings або
+оточення). Виводить сирі JSON-RPC-відповіді у stdout і додає їх у
 docs/mcp-notes.md.
 """
 from __future__ import annotations
@@ -19,8 +19,8 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# Minimal local env loader (avoid importing core.config yet — phase 0 has no deps
-# beyond httpx; but if pydantic-settings is available, reuse core.config).
+# Мінімальний локальний завантажувач .env (не імпортуємо core.config — у фазу 0
+# немає залежностей поза httpx; але якщо pydantic-settings доступний, перевикористовуємо core.config).
 try:
     from dotenv import load_dotenv  # type: ignore
 except ImportError:
@@ -33,7 +33,7 @@ load_dotenv(ROOT / ".env")
 SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp.silpo.ua/mcp")
 ACCESS_TOKEN = os.getenv("MCP_API_KEY", "")
 
-NOTES_PATH = ROOT / "docs" / "mcp-notes.md"  # static summary; raw logs go to docs/raw/
+NOTES_PATH = ROOT / "docs" / "mcp-notes.md"  # статичне зведення; сирі логи йдуть у docs/raw/
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 
@@ -91,7 +91,7 @@ class McpProbe:
         return self._parse(resp)
 
     async def call_tool_json(self, name: str, arguments: dict) -> dict:
-        """Call a tool and return the JSON parsed from content[0].text."""
+        """Викликає інструмент і повертає JSON, розібраний з content[0].text."""
         raw = await self.call_tool(name, arguments)
         content = raw.get("result", {}).get("content", [])
         if not content:
@@ -114,7 +114,7 @@ class McpProbe:
             }
         if "application/json" in resp.headers.get("content-type", ""):
             return resp.json()
-        # SSE stream (text/event-stream)
+        # SSE-потік (text/event-stream)
         text = resp.text
         data_chunks = []
         for line in text.splitlines():
