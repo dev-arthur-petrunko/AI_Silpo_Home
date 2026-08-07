@@ -105,11 +105,19 @@ LLM аналізує останні 60 і повертає профіль, як�
 приватний текст: «ти зазвичай береш це раз на місяць, зараз збирається
 партія — приєднатись?».
 
+**MCP як AI-шар:**
+
+- `core/mcp_client.py` — клієнт **MCP (Model Context Protocol)** — AI-орієнтованого
+  протоколу підключення моделей до даних та інструментів. Ми використовуємо
+  MCP-сервер Сільпо (`https://mcp.silpo.ua/mcp`) як **джерело даних**: товари,
+  ціни, залишки (`stock`), контекст доставки за містом. Це та сама інфраструктура,
+  через яку LLM-агент отримував би контекст, але в боті запити робить наш код
+  (JSON-RPC over HTTP, без виклику LLM).
+
 **Що AI не є:**
 
 - `core/relevance_scorer.py` — **TF-IDF + cosine-схожість**: класична математика,
   без LLM і без мережі.
-- `core/mcp_client.py` — звичайна інтеграція з API Сільпо (JSON-RPC), не AI.
 
 **Fallback:** якщо `GROQ_API_KEY` не задано — `LLMError` ловиться, і бот працює
 по нейтральних шаблонах: пости без тонованого вступу, нагадування за шаблоном.
@@ -118,7 +126,7 @@ LLM аналізує останні 60 і повертає профіль, як�
 
 - **Python 3.14**, **aiogram 3** (async), **APScheduler**, **SQLAlchemy 2** (async) + **Alembic**
 - **БД:** PostgreSQL у продакшні, SQLite — локально (`DATABASE_URL`)
-- **MCP-клієнт:** `https://mcp.silpo.ua/mcp` (streamable HTTP, JSON-RPC, Bearer-токен, tenacity-retry)
+- **MCP-клієнт:** MCP (Model Context Protocol) Сільпо — `https://mcp.silpo.ua/mcp` (streamable HTTP, JSON-RPC, Bearer-токен, tenacity-retry)
 - **LLM:** Groq (tone-profiler, нагадування) через звичайний httpx
 - Тести: `pytest` (63 passed)
 
